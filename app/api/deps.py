@@ -43,13 +43,31 @@ def get_auth_context(
             detail=str(exc),
         ) from exc
 
-    user_id = token_payload.get("sub")
+    user_id = token_payload.get("user_id")
+    email = token_payload.get("email")
+    role = token_payload.get("role")
+    project_id = token_payload.get("project_id")
     token_jti = token_payload.get("jti")
     token_exp = token_payload.get("exp")
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token payload is missing subject",
+            detail="Token payload is missing user_id",
+        )
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token payload is missing email",
+        )
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token payload is missing role",
+        )
+    if project_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token payload is missing project_id",
         )
     if not token_jti:
         raise HTTPException(
@@ -78,8 +96,22 @@ def get_auth_context(
             detail="User not found for token",
         )
 
+    try:
+        normalized_project_id = int(project_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token payload has invalid project_id",
+        ) from exc
+
     return {
         "user": user,
+        "claims": {
+            "user_id": str(user_id),
+            "email": str(email),
+            "role": str(role),
+            "project_id": normalized_project_id,
+        },
         "token_jti": token_jti,
         "token_expires_at": expires_at,
         "token_payload": token_payload,

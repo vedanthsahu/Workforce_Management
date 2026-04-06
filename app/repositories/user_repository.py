@@ -57,7 +57,7 @@ def create_user(
     email: str,
     password_hash: str,
     location: str,
-    project: str,
+    project: int,
     role: str,
 ) -> dict[str, Any]:
     with conn.cursor(cursor_factory=RealDictCursor) as cur:

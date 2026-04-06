@@ -7,8 +7,13 @@ def _normalize_email(value: str) -> str:
     return value.strip().lower()
 
 
-def _validate_non_empty(value: str, field_name: str) -> str:
-    normalized = value.strip()
+def _validate_non_empty(value, field_name: str) -> str:
+    if isinstance(value, int):
+        normalized = str(value)
+    elif isinstance(value, str):
+        normalized = value.strip()
+    else:
+        raise TypeError(f"{field_name} must be str or int")
     if not normalized:
         raise ValueError(f"{field_name} cannot be empty")
     return normalized
@@ -19,7 +24,7 @@ class SignupRequest(BaseModel):
     email: str
     password: str = Field(min_length=8, max_length=128)
     location: str = Field(min_length=1, max_length=100)
-    project: str = Field(min_length=1, max_length=100)
+    project: int = Field(gt=0)
     role: str = Field(min_length=1, max_length=100)
 
     @field_validator("name")
@@ -35,7 +40,7 @@ class SignupRequest(BaseModel):
             raise ValueError("Invalid email format")
         return normalized
 
-    @field_validator("location", "project", "role")
+    @field_validator("location", "role")
     @classmethod
     def validate_metadata(cls, value: str, info) -> str:
         return _validate_non_empty(value, str(info.field_name))
@@ -56,11 +61,20 @@ class LoginRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str | None = None
     token_type: str = "bearer"
 
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(min_length=1, max_length=1024)
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str = Field(min_length=1, max_length=1024)
 
 
 class UserResponse(BaseModel):
