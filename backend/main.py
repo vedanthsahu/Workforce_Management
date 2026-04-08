@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from backend.api.routes.auth import router as auth_router
 from backend.api.routes.bookings import router as bookings_router
+from backend.api.routes.locations import router as locations_router
 from backend.db.connection import get_db_connection
 from backend.repositories.token_repository import (
     ensure_refresh_tokens_table,
@@ -14,6 +15,7 @@ from backend.repositories.user_repository import ensure_user_profile_columns
 app = FastAPI(title="Seat Booking Auth API")
 app.include_router(auth_router)
 app.include_router(bookings_router)
+app.include_router(locations_router)
 
 
 @app.on_event("startup")
@@ -41,6 +43,9 @@ def index() -> dict[str, object]:
             "POST /bookings",
             "GET /bookings",
             "GET /bookings/available",
+            "GET /offices",
+            "GET /offices/{office_id}/floors",
+            "GET /floors/{floor_id}/seats",
             "GET /health",
         ],
     }
