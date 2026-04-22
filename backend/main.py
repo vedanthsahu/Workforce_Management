@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from backend.api.routes.auth import router as auth_router
 from backend.api.routes.bookings import router as bookings_router
 from backend.api.routes.locations import router as locations_router
+from backend.api.routes.sso import router as sso_router
 from backend.db.connection import get_db_connection
 from backend.repositories.token_repository import (
     ensure_refresh_tokens_table,
@@ -14,6 +15,8 @@ from backend.repositories.user_repository import ensure_user_profile_columns
 
 app = FastAPI(title="Seat Booking Auth API")
 app.include_router(auth_router)
+# SSO: Cookie-based Microsoft login endpoints under /auth.
+app.include_router(sso_router, prefix="/auth", tags=["SSO"])
 app.include_router(bookings_router)
 app.include_router(locations_router)
 
@@ -40,6 +43,10 @@ def index() -> dict[str, object]:
             "POST /refresh",
             "GET /me",
             "POST /logout",
+            "GET /auth/login-page",
+            "GET /auth/callback",
+            "GET /auth/session-check",
+            "GET /auth/logout",
             "POST /bookings",
             "GET /bookings",
             "GET /bookings/available",

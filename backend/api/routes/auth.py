@@ -21,6 +21,7 @@ protected_router = APIRouter(tags=["auth"], dependencies=[Depends(get_auth_conte
 
 
 @public_router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+# DEPRECATED: remove after SSO is confirmed
 def signup(
     payload: SignupRequest,
     conn: Annotated[PGConnection, Depends(get_db)],
@@ -29,6 +30,7 @@ def signup(
 
 
 @public_router.post("/login", response_model=TokenResponse)
+# DEPRECATED: remove after SSO is confirmed
 def login(
     payload: LoginRequest,
     conn: Annotated[PGConnection, Depends(get_db)],

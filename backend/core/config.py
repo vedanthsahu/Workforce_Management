@@ -33,6 +33,11 @@ class Settings:
     jwt_secret: str
     jwt_algorithm: str
     jwt_expire_hours: int
+    # SSO: Microsoft OAuth2/OIDC client configuration.
+    azure_client_id: str
+    azure_client_secret: str
+    azure_tenant_id: str
+    public_base_url: str
 
     @property
     def db_config(self) -> dict[str, object]:
@@ -60,4 +65,9 @@ def get_settings() -> Settings:
         jwt_secret=_require_env("JWT_SECRET"),
         jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
         jwt_expire_hours=_parse_int_env("JWT_EXPIRE_HOURS", "1"),
+        # SSO: Azure application credentials and callback base URL.
+        azure_client_id=_require_env("AZURE_CLIENT_ID"),
+        azure_client_secret=_require_env("AZURE_CLIENT_SECRET"),
+        azure_tenant_id=_require_env("AZURE_TENANT_ID"),
+        public_base_url=_require_env("PUBLIC_BASE_URL"),
     )
