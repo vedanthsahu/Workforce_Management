@@ -1,231 +1,317 @@
-from datetime import datetime, timezone
-from typing import Annotated, Any
-import secrets
-import time
-from urllib.parse import urlencode, urlparse
+from __future__ import annotations
 
-import psycopg2
+import secrets
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import urlencode
+
 import requests
-from fastapi import Depends, HTTPException, Request, status
 from jose import ExpiredSignatureError, JWTError, jwt
-from psycopg2.extensions import connection as PGConnection
 
 from backend.core.config import get_settings
-from backend.db.connection import get_db
-from backend.repositories.user_repository import fetch_user_by_id
 
-# SSO: in-memory TTLs for CSRF states and authenticated sessions.
+MICROSOFT_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 STATE_TTL_SECONDS = 600
-SESSION_TTL_SECONDS = 3600
+MICROSOFT_SCOPES = (
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "User.Read",
+    "User.Read.All",
+    "GroupMember.Read.All",
+)
 
-# SSO: in-memory stores (single-process only).
-login_states: dict[str, float] = {}
-sessions: dict[str, dict[str, Any]] = {}
+
+@dataclass(frozen=True)
+class SSOError(Exception):
+    status_code: int
+    code: str
+    message: str
+    details: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "code": self.code,
+            "message": self.message,
+        }
+        if self.details:
+            payload["details"] = self.details
+        return payload
 
 
-def _authorize_url() -> str:
+class GraphAPIError(SSOError):
+    pass
+
+
+def build_auth_url() -> tuple[str, str]:
     settings = get_settings()
-    return (
-        f"https://login.microsoftonline.com/"
-        f"{settings.azure_tenant_id}/oauth2/v2.0/authorize"
-    )
-
-
-def get_token_url() -> str:
-    settings = get_settings()
-    return f"https://login.microsoftonline.com/{settings.azure_tenant_id}/oauth2/v2.0/token"
-
-
-def _jwks_url() -> str:
-    settings = get_settings()
-    return f"https://login.microsoftonline.com/{settings.azure_tenant_id}/discovery/v2.0/keys"
-
-
-def get_redirect_uri() -> str:
-    settings = get_settings()
-    base = settings.public_base_url.rstrip("/")
-    return f"{base}/auth/callback"
-
-
-def _is_localhost_base_url(public_base_url: str) -> bool:
-    hostname = urlparse(public_base_url).hostname
-    return hostname in {"localhost", "127.0.0.1"}
-
-
-def get_cookie_settings() -> dict[str, Any]:
-    settings = get_settings()
-    # SSO: secure cookie follows URL scheme; localhost uses lax for dev.
-    secure = urlparse(settings.public_base_url).scheme == "https"
-    is_localhost = _is_localhost_base_url(settings.public_base_url)
-    same_site = "lax" if is_localhost else ("none" if secure else "lax")
-    return {
-        "httponly": True,
-        "secure": secure,
-        "samesite": same_site,
-        "max_age": SESSION_TTL_SECONDS,
-        "path": "/",
-    }
-
-
-def _purge_expired_states() -> None:
-    # SSO: remove stale CSRF states before creating/consuming new states.
-    now = time.time()
-    expired = [state for state, created_at in login_states.items() if now - created_at > STATE_TTL_SECONDS]
-    for state in expired:
-        login_states.pop(state, None)
-
-
-def _purge_expired_sessions() -> None:
-    # SSO: remove stale in-memory sessions.
-    now = time.time()
-    expired = [token for token, session in sessions.items() if now - session["created_at"] > SESSION_TTL_SECONDS]
-    for token in expired:
-        sessions.pop(token, None)
-
-
-def _build_auth_url() -> tuple[str, str]:
-    # SSO: create one-time CSRF state and authorization URL.
-    settings = get_settings()
-    _purge_expired_states()
-    state = secrets.token_urlsafe(24)
-    login_states[state] = time.time()
-
-    params = urlencode(
+    state = secrets.token_urlsafe(32)
+    query = urlencode(
         {
-            "client_id": settings.azure_client_id,
+            "client_id": settings.client_id,
             "response_type": "code",
-            "redirect_uri": get_redirect_uri(),
-            "scope": "openid profile email",
+            "redirect_uri": settings.redirect_uri,
+            "response_mode": "query",
+            "scope": " ".join(MICROSOFT_SCOPES),
             "state": state,
             "prompt": "select_account",
         }
     )
-    return f"{_authorize_url()}?{params}", state
+    return f"{settings.auth_url}?{query}", state
 
 
-def consume_login_state(state: str) -> None:
-    _purge_expired_states()
-    created_at = login_states.pop(state, None)
-    if created_at is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired login state",
-        )
-    if time.time() - created_at > STATE_TTL_SECONDS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Login state has expired",
-        )
-
-
-def _verify_id_token(id_token: str) -> dict[str, Any]:
+def exchange_code_for_token(code: str) -> dict[str, str]:
     settings = get_settings()
+    if not code:
+        raise SSOError(
+            status_code=400,
+            code="missing_authorization_code",
+            message="Microsoft callback did not include an authorization code.",
+        )
+
     try:
-        jwks_response = requests.get(_jwks_url(), timeout=10)
-        jwks_response.raise_for_status()
-        jwks = jwks_response.json()
+        response = requests.post(
+            settings.token_url,
+            data={
+                "client_id": settings.client_id,
+                "client_secret": settings.client_secret,
+                "code": code,
+                "redirect_uri": settings.redirect_uri,
+                "grant_type": "authorization_code",
+                "scope": " ".join(MICROSOFT_SCOPES),
+            },
+            timeout=10,
+        )
     except requests.RequestException as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to fetch Microsoft JWKS",
+        raise SSOError(
+            status_code=502,
+            code="token_exchange_unavailable",
+            message="Failed to reach Microsoft token endpoint.",
         ) from exc
+
+    payload = _safe_json(response)
+    if response.status_code != 200:
+        raise SSOError(
+            status_code=400,
+            code="token_exchange_failed",
+            message="Microsoft token exchange failed.",
+            details=_provider_error_details(payload),
+        )
+
+    access_token = payload.get("access_token")
+    id_token = payload.get("id_token")
+    if not access_token:
+        raise SSOError(
+            status_code=400,
+            code="missing_access_token",
+            message="Microsoft token response did not include an access_token.",
+            details=_provider_error_details(payload),
+        )
+    if not id_token:
+        raise SSOError(
+            status_code=400,
+            code="missing_id_token",
+            message="Microsoft token response did not include an id_token.",
+            details=_provider_error_details(payload),
+        )
+
+    return {
+        "access_token": str(access_token),
+        "id_token": str(id_token),
+    }
+
+
+def verify_id_token(id_token: str) -> dict[str, Any]:
+    settings = get_settings()
+    if not id_token:
+        raise SSOError(
+            status_code=401,
+            code="missing_id_token",
+            message="Microsoft id_token is required.",
+        )
+
+    jwks = _fetch_jwks()
+    signing_key = _resolve_signing_key(id_token, jwks)
 
     try:
         claims = jwt.decode(
             id_token,
-            jwks,
+            signing_key,
             algorithms=["RS256"],
-            audience=settings.azure_client_id,
-            options={"verify_iss": False},
+            audience=settings.client_id,
+            issuer=f"https://login.microsoftonline.com/{settings.tenant_id}/v2.0",
         )
     except ExpiredSignatureError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Microsoft id_token has expired",
+        raise SSOError(
+            status_code=401,
+            code="expired_id_token",
+            message="Microsoft id_token has expired.",
         ) from exc
     except JWTError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Microsoft id_token",
+        raise SSOError(
+            status_code=401,
+            code="invalid_id_token",
+            message="Microsoft id_token validation failed.",
         ) from exc
 
-    # SSO: issuer must match the configured tenant.
-    issuer = str(claims.get("iss") or "")
-    expected_issuer_prefix = f"https://login.microsoftonline.com/{settings.azure_tenant_id}"
-    if not issuer.startswith(expected_issuer_prefix):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Microsoft token issuer",
+    if str(claims.get("tid") or "") != settings.tenant_id:
+        raise SSOError(
+            status_code=401,
+            code="tenant_mismatch",
+            message="Microsoft id_token tenant did not match the configured tenant.",
         )
+
     return claims
 
 
-def _create_session(*, user_id: str, email: str) -> str:
-    # SSO: issue in-memory session token.
-    _purge_expired_sessions()
-    session_token = secrets.token_urlsafe(32)
-    sessions[session_token] = {
-        "user_id": user_id,
-        "email": email,
-        "created_at": time.time(),
-    }
-    return session_token
+def fetch_graph_me(access_token: str) -> dict[str, Any]:
+    return _graph_get(
+        access_token,
+        "/me",
+        params={
+            "$select": "id,displayName,mail,userPrincipalName,jobTitle,department,companyName",
+        },
+    )
 
 
-def get_active_session(session_token: str | None) -> dict[str, Any] | None:
-    _purge_expired_sessions()
-    if not session_token:
-        return None
-    session = sessions.get(session_token)
-    if session is None:
-        return None
-    if time.time() - session["created_at"] > SESSION_TTL_SECONDS:
-        sessions.pop(session_token, None)
-        return None
-    return session
+def fetch_graph_groups(access_token: str) -> dict[str, Any]:
+    return _graph_get(
+        access_token,
+        "/me/memberOf",
+        params={"$select": "id,displayName"},
+    )
 
 
-def clear_session(session_token: str | None) -> None:
-    if session_token:
-        sessions.pop(session_token, None)
+def fetch_graph_manager(access_token: str) -> dict[str, Any]:
+    return _graph_get(access_token, "/me/manager")
 
 
-def get_current_sso_user(
-    request: Request,
-    conn: Annotated[PGConnection, Depends(get_db)],
-) -> dict[str, Any]:
-    # SSO: cookie-based authenticated user loader.
-    session_token = request.cookies.get("session_token")
-    if not session_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing session cookie",
+def _fetch_jwks() -> dict[str, Any]:
+    settings = get_settings()
+    try:
+        response = requests.get(settings.jwks_url, timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise SSOError(
+            status_code=502,
+            code="jwks_fetch_failed",
+            message="Failed to fetch Microsoft signing keys.",
+        ) from exc
+
+    payload = _safe_json(response)
+    keys = payload.get("keys")
+    if not isinstance(keys, list) or not keys:
+        raise SSOError(
+            status_code=502,
+            code="invalid_jwks_response",
+            message="Microsoft JWKS response did not contain any signing keys.",
         )
+    return payload
 
-    session = get_active_session(session_token)
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session expired or not found",
+
+def _resolve_signing_key(id_token: str, jwks: dict[str, Any]) -> dict[str, Any]:
+    try:
+        header = jwt.get_unverified_header(id_token)
+    except JWTError as exc:
+        raise SSOError(
+            status_code=401,
+            code="invalid_id_token_header",
+            message="Microsoft id_token header is invalid.",
+        ) from exc
+
+    kid = str(header.get("kid") or "")
+    for key in jwks.get("keys", []):
+        if key.get("kid") == kid:
+            return key
+
+    raise SSOError(
+        status_code=401,
+        code="signing_key_not_found",
+        message="No matching Microsoft signing key was found for the id_token.",
+    )
+
+
+def _graph_get(
+    access_token: str,
+    path: str,
+    *,
+    params: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    if not access_token:
+        raise GraphAPIError(
+            status_code=401,
+            code="missing_access_token",
+            message="Session is missing the Microsoft access token.",
         )
 
     try:
-        user = fetch_user_by_id(conn, str(session["user_id"]))
-    except psycopg2.Error as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch authenticated SSO user",
+        response = requests.get(
+            f"{MICROSOFT_GRAPH_BASE_URL}{path}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params=params,
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise GraphAPIError(
+            status_code=502,
+            code="graph_unavailable",
+            message="Failed to reach Microsoft Graph.",
         ) from exc
 
-    if user is None:
-        clear_session(session_token)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated user not found",
+    payload = _safe_json(response)
+    if response.status_code == 403:
+        raise GraphAPIError(
+            status_code=403,
+            code="insufficient_privileges",
+            message="The signed-in user or app does not have enough Microsoft Graph permissions.",
+            details=_provider_error_details(payload),
+        )
+    if response.status_code == 404:
+        raise GraphAPIError(
+            status_code=404,
+            code="graph_resource_not_found",
+            message="The requested Microsoft Graph resource was not found.",
+            details=_provider_error_details(payload),
+        )
+    if response.status_code >= 400:
+        raise GraphAPIError(
+            status_code=502 if response.status_code >= 500 else response.status_code,
+            code="graph_request_failed",
+            message="Microsoft Graph request failed.",
+            details=_provider_error_details(payload),
         )
 
-    return user
+    return payload
 
 
-def current_utc_timestamp() -> datetime:
-    return datetime.now(timezone.utc)
+def _safe_json(response: requests.Response) -> dict[str, Any]:
+    if not response.content:
+        return {}
+    try:
+        payload = response.json()
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {"data": payload}
+
+
+def _provider_error_details(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if not payload:
+        return None
+
+    details: dict[str, Any] = {}
+    error = payload.get("error")
+    error_description = payload.get("error_description")
+
+    if isinstance(error, str) and error:
+        details["provider_error"] = error
+    elif isinstance(error, dict):
+        if error.get("code"):
+            details["provider_error"] = error["code"]
+        if error.get("message"):
+            details["provider_message"] = error["message"]
+
+    if isinstance(error_description, str) and error_description:
+        details["provider_message"] = error_description
+
+    return details or payload

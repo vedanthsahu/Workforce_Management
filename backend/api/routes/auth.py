@@ -3,7 +3,7 @@ from typing import Any, Annotated
 from fastapi import APIRouter, Depends, status
 from psycopg2.extensions import connection as PGConnection
 
-from backend.api.deps import get_auth_context, get_current_user
+from backend.api.deps import get_auth_context, get_current_bearer_user
 from backend.db.connection import get_db
 from backend.schemas.auth import (
     LoginRequest,
@@ -47,7 +47,7 @@ def refresh_token(
 
 
 @protected_router.get("/me", response_model=UserResponse)
-def me(current_user: Annotated[dict, Depends(get_current_user)]) -> UserResponse:
+def me(current_user: Annotated[dict, Depends(get_current_bearer_user)]) -> UserResponse:
     return UserResponse(**current_user)
 
 

@@ -1,14 +1,15 @@
+from datetime import datetime, timedelta, timezone
 from typing import Any, Annotated
-from datetime import datetime, timezone
 
 import psycopg2
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from psycopg2.extensions import connection as PGConnection
 
+from backend.core.config import get_settings
 from backend.core.security import TokenError, decode_token
 from backend.db.connection import get_db
-from backend.repositories.token_repository import is_token_revoked
+from backend.repositories.token_repository import delete_session, get_session, is_token_revoked
 from backend.repositories.user_repository import fetch_user_by_id
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -118,7 +119,92 @@ def get_auth_context(
     }
 
 
-def get_current_user(
+def get_current_bearer_user(
     auth_context: Annotated[dict[str, Any], Depends(get_auth_context)],
 ) -> dict[str, Any]:
     return auth_context["user"]
+
+
+def get_current_user(
+    request: Request,
+    conn: Annotated[PGConnection, Depends(get_db)],
+) -> dict[str, Any]:
+    settings = get_settings()
+    session_token = request.cookies.get("session_token")
+    if not session_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "missing_session_token",
+                "message": "Authentication session cookie is missing.",
+            },
+        )
+
+    try:
+        session = get_session(conn, session_token)
+    except psycopg2.Error as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "session_lookup_failed",
+                "message": "Failed to read the current session.",
+            },
+        ) from exc
+
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "invalid_session",
+                "message": "Authentication session is invalid.",
+            },
+        )
+
+    created_at = session["created_at"]
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+
+    expires_at = created_at + timedelta(seconds=settings.session_ttl)
+    if expires_at <= datetime.now(timezone.utc):
+        try:
+            delete_session(conn, session_token)
+            conn.commit()
+        except psycopg2.Error:
+            conn.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "expired_session",
+                "message": "Authentication session has expired.",
+            },
+        )
+
+    try:
+        user = fetch_user_by_id(conn, str(session["user_id"]))
+    except psycopg2.Error as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "user_lookup_failed",
+                "message": "Failed to load the authenticated user.",
+            },
+        ) from exc
+
+    if user is None:
+        try:
+            delete_session(conn, session_token)
+            conn.commit()
+        except psycopg2.Error:
+            conn.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "user_not_found",
+                "message": "Authenticated user no longer exists.",
+            },
+        )
+
+    request.state.session = session
+    request.state.session_token = session_token
+    request.state.current_user = user
+    return user

@@ -33,11 +33,15 @@ class Settings:
     jwt_secret: str
     jwt_algorithm: str
     jwt_expire_hours: int
-    # SSO: Microsoft OAuth2/OIDC client configuration.
-    azure_client_id: str
-    azure_client_secret: str
-    azure_tenant_id: str
-    public_base_url: str
+    client_id: str
+    client_secret: str
+    tenant_id: str
+    redirect_uri: str
+    frontend_url: str
+    session_ttl: int
+    auth_url: str
+    token_url: str
+    jwks_url: str
 
     @property
     def db_config(self) -> dict[str, object]:
@@ -54,6 +58,7 @@ class Settings:
 
 @lru_cache
 def get_settings() -> Settings:
+    tenant_id = _require_env("TENANT_ID")
     return Settings(
         db_host=_require_env("DB_HOST"),
         db_name=_require_env("DB_NAME"),
@@ -65,9 +70,13 @@ def get_settings() -> Settings:
         jwt_secret=_require_env("JWT_SECRET"),
         jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
         jwt_expire_hours=_parse_int_env("JWT_EXPIRE_HOURS", "1"),
-        # SSO: Azure application credentials and callback base URL.
-        azure_client_id=_require_env("AZURE_CLIENT_ID"),
-        azure_client_secret=_require_env("AZURE_CLIENT_SECRET"),
-        azure_tenant_id=_require_env("AZURE_TENANT_ID"),
-        public_base_url=_require_env("PUBLIC_BASE_URL"),
+        client_id=_require_env("CLIENT_ID"),
+        client_secret=_require_env("CLIENT_SECRET"),
+        tenant_id=tenant_id,
+        redirect_uri=_require_env("REDIRECT_URI"),
+        frontend_url=_require_env("FRONTEND_URL").rstrip("/"),
+        session_ttl=_parse_int_env("SESSION_TTL", "3600"),
+        auth_url=f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize",
+        token_url=f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+        jwks_url=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
     )
