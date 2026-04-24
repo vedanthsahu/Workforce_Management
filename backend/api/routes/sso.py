@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import secrets
 from typing import Annotated, Any
 
 import psycopg2
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from psycopg2.extensions import connection as PGConnection
 
 from backend.api.deps import get_current_user
 from backend.core.config import get_settings
+from backend.core.security import (
+    ACCESS_TOKEN_COOKIE_NAME,
+    REFRESH_TOKEN_COOKIE_NAME,
+    SESSION_TOKEN_COOKIE_NAME,
+    build_auth_cookie_settings,
+)
 from backend.core.sso import (
     GraphAPIError,
     SSOError,
@@ -22,12 +29,12 @@ from backend.core.sso import (
     verify_id_token,
 )
 from backend.db.connection import get_db
-from backend.repositories.token_repository import create_session, delete_session
+from backend.repositories.token_repository import create_session, delete_session, get_session
 from backend.repositories.user_repository import upsert_user_from_sso
+from backend.services.auth_service import AuthTokens, issue_tokens_for_user
 
 router = APIRouter(tags=["SSO"])
 
-SESSION_COOKIE_NAME = "session_token"
 STATE_COOKIE_NAME = "oauth_state"
 
 
@@ -42,8 +49,7 @@ def auth_login():
     response.set_cookie(
         key=STATE_COOKIE_NAME,
         value=state,
-        max_age=STATE_TTL_SECONDS,
-        **_cookie_settings(),
+        **build_auth_cookie_settings(max_age=STATE_TTL_SECONDS),
     )
     return response
 
@@ -144,65 +150,58 @@ def auth_callback(
             email=email,
             display_name=display_name,
         )
-        session = create_session(
+        auth_tokens = issue_tokens_for_user(conn, user, commit=False)
+        conn.commit()
+    except HTTPException as exc:
+        conn.rollback()
+        detail = exc.detail if isinstance(exc.detail, dict) else None
+        response = _error_response(exc.status_code, "token_issue_failed", str(exc.detail))
+        if detail:
+            response = _error_response(
+                exc.status_code,
+                str(detail.get("code") or "token_issue_failed"),
+                str(detail.get("message") or "Failed to issue authentication tokens."),
+                {
+                    key: value
+                    for key, value in detail.items()
+                    if key not in {"code", "message"}
+                }
+                or None,
+            )
+        _clear_state_cookie(response)
+        return response
+    except psycopg2.Error:
+        conn.rollback()
+        response = _error_response(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code="sso_persistence_failed",
+            message="Failed to create or update the authenticated user.",
+        )
+        _clear_state_cookie(response)
+        return response
+
+    graph_session_token: str | None = None
+    try:
+        graph_session = create_session(
             conn,
             user_id=str(user["user_id"]),
             email=str(user["email"]),
             access_token=token_payload["access_token"],
         )
         conn.commit()
+        graph_session_token = str(graph_session["session_token"])
     except psycopg2.Error:
         conn.rollback()
-        response = _error_response(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            code="session_persistence_failed",
-            message="Failed to persist the authenticated SSO session.",
-        )
-        _clear_state_cookie(response)
-        return response
 
     settings = get_settings()
     response = RedirectResponse(url=settings.frontend_url, status_code=status.HTTP_302_FOUND)
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=session["session_token"],
-        max_age=settings.session_ttl,
-        **_cookie_settings(),
-    )
-    _clear_state_cookie(response)
-    return response
-
-
-@router.get("/auth/me")
-def auth_me(
-    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
-) -> dict[str, Any]:
-    return current_user
-
-
-@router.get("/auth/logout", response_model=None)
-def auth_logout(
-    request: Request,
-    conn: Annotated[PGConnection, Depends(get_db)],
-):
-    session_token = request.cookies.get(SESSION_COOKIE_NAME)
-    if session_token:
-        try:
-            delete_session(conn, session_token)
-            conn.commit()
-        except psycopg2.Error:
-            conn.rollback()
-            response = _error_response(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                code="session_delete_failed",
-                message="Failed to delete the current session.",
-            )
-            _clear_session_cookie(response)
-            _clear_state_cookie(response)
-            return response
-
-    response = RedirectResponse(url=get_settings().frontend_url, status_code=status.HTTP_302_FOUND)
-    _clear_session_cookie(response)
+    _set_auth_cookies(response, auth_tokens)
+    if graph_session_token:
+        response.set_cookie(
+            key=SESSION_TOKEN_COOKIE_NAME,
+            value=graph_session_token,
+            **build_auth_cookie_settings(max_age=settings.session_ttl),
+        )
     _clear_state_cookie(response)
     return response
 
@@ -210,10 +209,11 @@ def auth_logout(
 @router.get("/graph/me", response_model=None)
 def graph_me(
     request: Request,
+    conn: Annotated[PGConnection, Depends(get_db)],
     _: Annotated[dict[str, Any], Depends(get_current_user)],
 ):
     try:
-        return fetch_graph_me(_require_access_token(request))
+        return fetch_graph_me(_require_graph_access_token(conn, request))
     except GraphAPIError as exc:
         return _error_response(exc.status_code, exc.code, exc.message, exc.details)
 
@@ -221,10 +221,11 @@ def graph_me(
 @router.get("/graph/groups", response_model=None)
 def graph_groups(
     request: Request,
+    conn: Annotated[PGConnection, Depends(get_db)],
     _: Annotated[dict[str, Any], Depends(get_current_user)],
 ):
     try:
-        return fetch_graph_groups(_require_access_token(request))
+        return fetch_graph_groups(_require_graph_access_token(conn, request))
     except GraphAPIError as exc:
         return _error_response(exc.status_code, exc.code, exc.message, exc.details)
 
@@ -232,10 +233,11 @@ def graph_groups(
 @router.get("/graph/manager", response_model=None)
 def graph_manager(
     request: Request,
+    conn: Annotated[PGConnection, Depends(get_db)],
     _: Annotated[dict[str, Any], Depends(get_current_user)],
 ):
     try:
-        return fetch_graph_manager(_require_access_token(request))
+        return fetch_graph_manager(_require_graph_access_token(conn, request))
     except GraphAPIError as exc:
         return _error_response(exc.status_code, exc.code, exc.message, exc.details)
 
@@ -276,43 +278,79 @@ def _resolve_display_name(claims: dict[str, Any], graph_profile: dict[str, Any])
     return None
 
 
-def _require_access_token(request: Request) -> str:
-    session = getattr(request.state, "session", None)
-    access_token = None if session is None else session.get("access_token")
+def _require_graph_access_token(conn: PGConnection, request: Request) -> str:
+    session_token = request.cookies.get(SESSION_TOKEN_COOKIE_NAME)
+    if not session_token:
+        raise GraphAPIError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="missing_graph_session",
+            message="Microsoft Graph session cookie is missing.",
+        )
+
+    try:
+        session = get_session(conn, session_token)
+    except psycopg2.Error as exc:
+        raise GraphAPIError(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code="graph_session_lookup_failed",
+            message="Failed to load the Microsoft Graph session.",
+        ) from exc
+
+    if session is None:
+        raise GraphAPIError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="invalid_graph_session",
+            message="Microsoft Graph session is invalid.",
+        )
+
+    created_at = session["created_at"]
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+
+    expires_at = created_at + timedelta(seconds=get_settings().session_ttl)
+    if expires_at <= datetime.now(timezone.utc):
+        try:
+            delete_session(conn, session_token)
+            conn.commit()
+        except psycopg2.Error:
+            conn.rollback()
+        raise GraphAPIError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="expired_graph_session",
+            message="Microsoft Graph session has expired.",
+        )
+
+    access_token = str(session.get("access_token") or "").strip()
     if not access_token:
         raise GraphAPIError(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            code="missing_access_token",
-            message="The current session does not include a Microsoft access token.",
+            code="missing_graph_access_token",
+            message="Microsoft Graph access token is missing from the current session.",
         )
-    return str(access_token)
+    return access_token
 
 
-def _cookie_settings() -> dict[str, Any]:
-    return {
-        "httponly": True,
-        "secure": True,
-        "samesite": "none",
-        "path": "/",
-    }
-
-
-def _clear_state_cookie(response: Response) -> None:
-    response.delete_cookie(
-        key=STATE_COOKIE_NAME,
-        secure=True,
-        httponly=True,
-        samesite="none",
-        path="/",
+def _set_auth_cookies(response: Response, auth_tokens: AuthTokens) -> None:
+    settings = get_settings()
+    response.set_cookie(
+        key=ACCESS_TOKEN_COOKIE_NAME,
+        value=auth_tokens.access_token,
+        **build_auth_cookie_settings(max_age=settings.jwt_access_token_ttl),
+    )
+    response.set_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        value=auth_tokens.refresh_token,
+        **build_auth_cookie_settings(max_age=settings.jwt_refresh_token_ttl),
     )
 
 
-def _clear_session_cookie(response: Response) -> None:
+def _clear_state_cookie(response: Response) -> None:
+    cookie_settings = build_auth_cookie_settings(max_age=0)
     response.delete_cookie(
-        key=SESSION_COOKIE_NAME,
-        secure=True,
+        key=STATE_COOKIE_NAME,
+        secure=cookie_settings["secure"],
         httponly=True,
-        samesite="none",
+        samesite=cookie_settings["samesite"],
         path="/",
     )
 

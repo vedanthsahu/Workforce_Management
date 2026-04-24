@@ -1,186 +1,126 @@
-from datetime import datetime, timedelta, timezone
 from typing import Any, Annotated
 
 import psycopg2
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from psycopg2.extensions import connection as PGConnection
 
 from backend.core.config import get_settings
-from backend.core.security import TokenError, decode_token
+from backend.core.security import (
+    ACCESS_TOKEN_COOKIE_NAME,
+    REFRESH_TOKEN_COOKIE_NAME,
+    SESSION_TOKEN_COOKIE_NAME,
+    ExpiredTokenError,
+    TokenError,
+    build_auth_cookie_settings,
+    decode_token,
+)
 from backend.db.connection import get_db
-from backend.repositories.token_repository import delete_session, get_session, is_token_revoked
 from backend.repositories.user_repository import fetch_user_by_id
+from backend.services.auth_service import AuthTokens, refresh_auth_tokens
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def _parse_exp_claim(exp_claim: Any) -> datetime:
-    if isinstance(exp_claim, datetime):
-        return exp_claim.astimezone(timezone.utc) if exp_claim.tzinfo else exp_claim.replace(tzinfo=timezone.utc)
-    if isinstance(exp_claim, (int, float)):
-        return datetime.fromtimestamp(exp_claim, tz=timezone.utc)
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Token payload has invalid expiration claim",
-    )
-
-
 def get_auth_context(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    request: Request,
+    response: Response,
     conn: Annotated[PGConnection, Depends(get_db)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
 ) -> dict[str, Any]:
-    if credentials is None:
+    token = request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)
+    if token is None and credentials is not None:
+        token = credentials.credentials
+
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing bearer token",
+            detail={
+                "code": "missing_access_token",
+                "message": "Access token cookie is missing.",
+            },
         )
 
     try:
-        token_payload = decode_token(credentials.credentials)
+        token_payload = decode_token(token)
+    except ExpiredTokenError:
+        refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
+        if not refresh_token:
+            _clear_auth_cookies(response)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "missing_refresh_token",
+                    "message": "Refresh token cookie is missing.",
+                },
+            )
+
+        try:
+            auth_tokens = refresh_auth_tokens(conn, refresh_token)
+        except HTTPException:
+            _clear_auth_cookies(response)
+            raise
+        _set_auth_cookies(response, auth_tokens)
+        token_payload = decode_token(auth_tokens.access_token)
     except TokenError as exc:
+        _clear_auth_cookies(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
+            detail={
+                "code": "invalid_access_token",
+                "message": str(exc),
+            },
         ) from exc
 
-    user_id = token_payload.get("user_id")
-    email = token_payload.get("email")
-    role = token_payload.get("role")
-    project_id = token_payload.get("project_id")
-    token_jti = token_payload.get("jti")
-    token_exp = token_payload.get("exp")
-    if not user_id:
+    subject = str(token_payload.get("sub") or "").strip()
+    email = str(token_payload.get("email") or "").strip().lower()
+    if not subject:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token payload is missing user_id",
+            detail={
+                "code": "invalid_access_token",
+                "message": "Access token is missing the 'sub' claim.",
+            },
         )
     if not email:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token payload is missing email",
-        )
-    if not role:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token payload is missing role",
-        )
-    if project_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token payload is missing project_id",
-        )
-    if not token_jti:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token payload is missing jti",
+            detail={
+                "code": "invalid_access_token",
+                "message": "Access token is missing the 'email' claim.",
+            },
         )
 
-    expires_at = _parse_exp_claim(token_exp)
+    claims = {
+        "user_id": subject,
+        "sub": subject,
+        "email": email,
+    }
 
-    try:
-        if is_token_revoked(conn, token_jti):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has been revoked",
-            )
-        user = fetch_user_by_id(conn, user_id)
-    except psycopg2.Error as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch user profile",
-        ) from exc
+    role = token_payload.get("role")
+    if role is not None:
+        claims["role"] = str(role)
 
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found for token",
-        )
+    tenant = token_payload.get("tenant")
+    if tenant is not None:
+        claims["tenant"] = str(tenant)
 
-    try:
-        normalized_project_id = int(project_id)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token payload has invalid project_id",
-        ) from exc
-
+    request.state.auth_claims = claims
     return {
-        "user": user,
-        "claims": {
-            "user_id": str(user_id),
-            "email": str(email),
-            "role": str(role),
-            "project_id": normalized_project_id,
-        },
-        "token_jti": token_jti,
-        "token_expires_at": expires_at,
+        "claims": claims,
         "token_payload": token_payload,
     }
 
 
-def get_current_bearer_user(
-    auth_context: Annotated[dict[str, Any], Depends(get_auth_context)],
-) -> dict[str, Any]:
-    return auth_context["user"]
-
-
 def get_current_user(
     request: Request,
+    auth_context: Annotated[dict[str, Any], Depends(get_auth_context)],
     conn: Annotated[PGConnection, Depends(get_db)],
 ) -> dict[str, Any]:
-    settings = get_settings()
-    session_token = request.cookies.get("session_token")
-    if not session_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "code": "missing_session_token",
-                "message": "Authentication session cookie is missing.",
-            },
-        )
+    user_id = auth_context["claims"]["user_id"]
 
     try:
-        session = get_session(conn, session_token)
-    except psycopg2.Error as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": "session_lookup_failed",
-                "message": "Failed to read the current session.",
-            },
-        ) from exc
-
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "code": "invalid_session",
-                "message": "Authentication session is invalid.",
-            },
-        )
-
-    created_at = session["created_at"]
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-
-    expires_at = created_at + timedelta(seconds=settings.session_ttl)
-    if expires_at <= datetime.now(timezone.utc):
-        try:
-            delete_session(conn, session_token)
-            conn.commit()
-        except psycopg2.Error:
-            conn.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "code": "expired_session",
-                "message": "Authentication session has expired.",
-            },
-        )
-
-    try:
-        user = fetch_user_by_id(conn, str(session["user_id"]))
+        user = fetch_user_by_id(conn, user_id)
     except psycopg2.Error as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -191,11 +131,6 @@ def get_current_user(
         ) from exc
 
     if user is None:
-        try:
-            delete_session(conn, session_token)
-            conn.commit()
-        except psycopg2.Error:
-            conn.rollback()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -204,7 +139,51 @@ def get_current_user(
             },
         )
 
-    request.state.session = session
-    request.state.session_token = session_token
     request.state.current_user = user
     return user
+
+
+def _set_auth_cookies(response: Response, auth_tokens: AuthTokens) -> None:
+    response.set_cookie(
+        key=ACCESS_TOKEN_COOKIE_NAME,
+        value=auth_tokens.access_token,
+        **build_auth_cookie_settings(max_age=_access_token_ttl_seconds()),
+    )
+    response.set_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        value=auth_tokens.refresh_token,
+        **build_auth_cookie_settings(max_age=_refresh_token_ttl_seconds()),
+    )
+
+
+def _clear_auth_cookies(response: Response) -> None:
+    cookie_settings = build_auth_cookie_settings(max_age=0)
+    response.delete_cookie(
+        key=ACCESS_TOKEN_COOKIE_NAME,
+        secure=cookie_settings["secure"],
+        httponly=True,
+        samesite=cookie_settings["samesite"],
+        path="/",
+    )
+    response.delete_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        secure=cookie_settings["secure"],
+        httponly=True,
+        samesite=cookie_settings["samesite"],
+        path="/",
+    )
+    response.delete_cookie(
+        key=SESSION_TOKEN_COOKIE_NAME,
+        secure=cookie_settings["secure"],
+        httponly=True,
+        samesite=cookie_settings["samesite"],
+        path="/",
+    )
+
+
+def _access_token_ttl_seconds() -> int:
+    return get_settings().jwt_access_token_ttl
+
+
+def _refresh_token_ttl_seconds() -> int:
+    return get_settings().jwt_refresh_token_ttl

@@ -11,24 +11,16 @@ from backend.api.routes.sso import router as sso_router
 from backend.core.config import get_settings
 from backend.db.connection import get_db_connection
 from backend.repositories.token_repository import (
-    ensure_sessions_table,
     ensure_refresh_tokens_table,
-    ensure_revoked_tokens_table,
-    purge_expired_sessions,
+    ensure_sessions_table,
     purge_expired_refresh_tokens,
-    purge_expired_revoked_tokens,
+    purge_expired_sessions,
 )
 from backend.repositories.user_repository import ensure_user_profile_columns
 
 settings = get_settings()
 
 app = FastAPI(title="Seat Booking Auth API")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],
@@ -55,10 +47,8 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
 def startup() -> None:
     with get_db_connection() as conn:
         ensure_user_profile_columns(conn)
-        ensure_revoked_tokens_table(conn)
         ensure_refresh_tokens_table(conn)
         ensure_sessions_table(conn)
-        purge_expired_revoked_tokens(conn)
         purge_expired_refresh_tokens(conn)
         purge_expired_sessions(conn, settings.session_ttl)
         conn.commit()
@@ -70,15 +60,13 @@ def index() -> dict[str, object]:
         "service": "seat-booking-auth",
         "docs": "/docs",
         "endpoints": [
-            "POST /signup",
-            "POST /login",
-            "POST /refresh",
-            "GET /me",
-            "POST /logout",
+            "POST /auth/signup",
+            "POST /auth/login",
+            "POST /auth/refresh",
+            "GET /auth/me",
+            "POST /auth/logout",
             "GET /auth/login",
             "GET /auth/callback",
-            "GET /auth/me",
-            "GET /auth/logout",
             "GET /graph/me",
             "GET /graph/groups",
             "GET /graph/manager",

@@ -63,13 +63,44 @@ def ensure_refresh_tokens_table(conn: PGConnection) -> None:
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS refresh_tokens (
-                token_id UUID PRIMARY KEY,
+                id UUID PRIMARY KEY,
                 user_id UUID NOT NULL,
                 token_hash TEXT NOT NULL UNIQUE,
                 expires_at TIMESTAMPTZ NOT NULL,
                 revoked BOOLEAN NOT NULL DEFAULT FALSE,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                replaced_by_token_id UUID NULL,
+                revoked_at TIMESTAMPTZ NULL
             )
+            """
+        )
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'refresh_tokens'
+                      AND column_name = 'token_id'
+                ) AND NOT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'refresh_tokens'
+                      AND column_name = 'id'
+                ) THEN
+                    ALTER TABLE refresh_tokens RENAME COLUMN token_id TO id;
+                END IF;
+            END
+            $$;
+            """
+        )
+        cur.execute("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS replaced_by_token_id UUID NULL")
+        cur.execute("ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ NULL")
+        cur.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_tokens_token_hash
+            ON refresh_tokens (token_hash)
             """
         )
         cur.execute(
@@ -82,6 +113,12 @@ def ensure_refresh_tokens_table(conn: PGConnection) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at
             ON refresh_tokens (expires_at)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_refresh_tokens_replaced_by_token_id
+            ON refresh_tokens (replaced_by_token_id)
             """
         )
 
@@ -97,8 +134,16 @@ def store_refresh_token(
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO refresh_tokens (token_id, user_id, token_hash, expires_at, revoked)
-            VALUES (%s, %s, %s, %s, FALSE)
+            INSERT INTO refresh_tokens (
+                id,
+                user_id,
+                token_hash,
+                expires_at,
+                revoked,
+                replaced_by_token_id,
+                revoked_at
+            )
+            VALUES (%s, %s, %s, %s, FALSE, NULL, NULL)
             """,
             (token_id, user_id, token_hash, expires_at),
         )
@@ -109,12 +154,14 @@ def fetch_refresh_token_by_hash(conn: PGConnection, token_hash: str) -> dict[str
         cur.execute(
             """
             SELECT
-                token_id::text AS token_id,
+                id::text AS id,
                 user_id::text AS user_id,
                 token_hash,
                 expires_at,
                 revoked,
-                created_at
+                created_at,
+                replaced_by_token_id::text AS replaced_by_token_id,
+                revoked_at
             FROM refresh_tokens
             WHERE token_hash = %s
             """,
@@ -127,21 +174,48 @@ def fetch_refresh_token_by_hash(conn: PGConnection, token_hash: str) -> dict[str
 def revoke_refresh_token(
     conn: PGConnection,
     *,
-    token_hash: str,
-    user_id: str,
+    token_id: str,
+    replaced_by_token_id: str | None = None,
 ) -> bool:
     with conn.cursor() as cur:
         cur.execute(
             """
             UPDATE refresh_tokens
-            SET revoked = TRUE
-            WHERE token_hash = %s
-              AND user_id = %s
+            SET
+                revoked = TRUE,
+                revoked_at = NOW(),
+                replaced_by_token_id = COALESCE(%s, replaced_by_token_id)
+            WHERE id = %s
               AND revoked = FALSE
             """,
-            (token_hash, user_id),
+            (replaced_by_token_id, token_id),
         )
         return cur.rowcount > 0
+
+
+def revoke_refresh_token_family(conn: PGConnection, *, token_id: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH RECURSIVE token_chain AS (
+                SELECT id, replaced_by_token_id
+                FROM refresh_tokens
+                WHERE id = %s
+
+                UNION ALL
+
+                SELECT child.id, child.replaced_by_token_id
+                FROM refresh_tokens AS child
+                INNER JOIN token_chain AS parent
+                    ON parent.replaced_by_token_id = child.id
+            )
+            UPDATE refresh_tokens
+            SET revoked = TRUE,
+                revoked_at = COALESCE(revoked_at, NOW())
+            WHERE id IN (SELECT id FROM token_chain)
+            """,
+            (token_id,),
+        )
 
 
 def purge_expired_refresh_tokens(conn: PGConnection) -> None:
