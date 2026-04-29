@@ -1,3 +1,11 @@
+"""HTTP routes for Microsoft SSO and delegated Graph access.
+
+This module implements the browser-facing OAuth redirect flow, user provisioning
+from Microsoft identity data, cookie-based storage of SSO session state, and
+proxy endpoints that expose selected Microsoft Graph resources to authenticated
+clients.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -40,6 +48,20 @@ STATE_COOKIE_NAME = "oauth_state"
 
 @router.get("/auth/login", response_model=None)
 def auth_login():
+    """Start the Microsoft OAuth login flow.
+
+    Returns:
+        Response: Redirect response to Microsoft containing a state cookie, or
+        an error response if the authorization URL cannot be built.
+
+    Side Effects:
+        Generates a CSRF state token, writes it to a short-lived cookie, and
+        redirects the client to Microsoft.
+
+    Failure Modes:
+        Converts ``SSOError`` raised during URL construction into a structured
+        JSON error response.
+    """
     try:
         auth_url, state = build_auth_url()
     except SSOError as exc:
@@ -63,6 +85,31 @@ def auth_callback(
     error: str | None = None,
     error_description: str | None = None,
 ):
+    """Handle the Microsoft OAuth callback and establish local auth state.
+
+    Args:
+        request: Incoming FastAPI request used to read the stored state cookie.
+        conn: Request-scoped PostgreSQL connection.
+        code: Optional authorization code returned by Microsoft.
+        state: Optional state parameter returned by Microsoft.
+        error: Optional provider error code returned instead of a success code.
+        error_description: Optional human-readable provider error description.
+
+    Returns:
+        Response: Redirect to the frontend with auth cookies on success, or a
+        structured error response on failure.
+
+    Side Effects:
+        Validates CSRF state, exchanges the auth code for Microsoft tokens,
+        verifies the ID token, reads Microsoft Graph profile data, creates or
+        updates the local user, issues backend auth tokens, stores an optional
+        Graph session, writes cookies, and commits or rolls back database work.
+
+    Failure Modes:
+        Returns structured error responses for provider callback errors, missing
+        state or code, failed token exchange, invalid identity data, auth-token
+        issuance failures, or database persistence errors.
+    """
     if error:
         response = _error_response(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -116,6 +163,8 @@ def auth_callback(
     try:
         graph_profile = fetch_graph_me(token_payload["access_token"])
     except GraphAPIError as exc:
+        # Profile enrichment is helpful but not strictly required when Graph
+        # denies access to optional fields or returns a missing profile.
         if exc.status_code not in {status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND}:
             response = _error_response(exc.status_code, exc.code, exc.message, exc.details)
             _clear_state_cookie(response)
@@ -191,6 +240,8 @@ def auth_callback(
         conn.commit()
         graph_session_token = str(graph_session["session_token"])
     except psycopg2.Error:
+        # Local authentication should still succeed even if the optional Graph
+        # session cannot be persisted for downstream proxy endpoints.
         conn.rollback()
 
     settings = get_settings()
@@ -212,6 +263,24 @@ def graph_me(
     conn: Annotated[PGConnection, Depends(get_db)],
     _: Annotated[dict[str, Any], Depends(get_current_user)],
 ):
+    """Proxy the signed-in user's Microsoft Graph profile.
+
+    Args:
+        request: Incoming FastAPI request used to read the Graph session cookie.
+        conn: Request-scoped PostgreSQL connection.
+        _: Authenticated user dependency used only to enforce local auth.
+
+    Returns:
+        dict[str, Any] | JSONResponse: Graph profile payload on success, or a
+        structured error response on failure.
+
+    Side Effects:
+        Loads the stored Graph access token from the database and performs an
+        outbound request to Microsoft Graph.
+
+    Failure Modes:
+        Converts ``GraphAPIError`` instances into structured JSON responses.
+    """
     try:
         return fetch_graph_me(_require_graph_access_token(conn, request))
     except GraphAPIError as exc:
@@ -224,6 +293,24 @@ def graph_groups(
     conn: Annotated[PGConnection, Depends(get_db)],
     _: Annotated[dict[str, Any], Depends(get_current_user)],
 ):
+    """Proxy the signed-in user's Microsoft Graph group memberships.
+
+    Args:
+        request: Incoming FastAPI request used to read the Graph session cookie.
+        conn: Request-scoped PostgreSQL connection.
+        _: Authenticated user dependency used only to enforce local auth.
+
+    Returns:
+        dict[str, Any] | JSONResponse: Graph group payload on success, or a
+        structured error response on failure.
+
+    Side Effects:
+        Loads the stored Graph access token from the database and performs an
+        outbound request to Microsoft Graph.
+
+    Failure Modes:
+        Converts ``GraphAPIError`` instances into structured JSON responses.
+    """
     try:
         return fetch_graph_groups(_require_graph_access_token(conn, request))
     except GraphAPIError as exc:
@@ -236,6 +323,24 @@ def graph_manager(
     conn: Annotated[PGConnection, Depends(get_db)],
     _: Annotated[dict[str, Any], Depends(get_current_user)],
 ):
+    """Proxy the signed-in user's Microsoft Graph manager relationship.
+
+    Args:
+        request: Incoming FastAPI request used to read the Graph session cookie.
+        conn: Request-scoped PostgreSQL connection.
+        _: Authenticated user dependency used only to enforce local auth.
+
+    Returns:
+        dict[str, Any] | JSONResponse: Graph manager payload on success, or a
+        structured error response on failure.
+
+    Side Effects:
+        Loads the stored Graph access token from the database and performs an
+        outbound request to Microsoft Graph.
+
+    Failure Modes:
+        Converts ``GraphAPIError`` instances into structured JSON responses.
+    """
     try:
         return fetch_graph_manager(_require_graph_access_token(conn, request))
     except GraphAPIError as exc:
@@ -243,6 +348,21 @@ def graph_manager(
 
 
 def _resolve_azure_oid(claims: dict[str, Any], graph_profile: dict[str, Any]) -> str:
+    """Resolve the best available Microsoft object identifier for a user.
+
+    Args:
+        claims: Verified Microsoft ID token claims.
+        graph_profile: Optional Microsoft Graph profile payload.
+
+    Returns:
+        str: First non-empty object identifier candidate, or an empty string.
+
+    Side Effects:
+        None.
+
+    Failure Modes:
+        None. Missing values simply result in an empty string.
+    """
     for candidate in (
         claims.get("oid"),
         claims.get("sub"),
@@ -255,6 +375,21 @@ def _resolve_azure_oid(claims: dict[str, Any], graph_profile: dict[str, Any]) ->
 
 
 def _resolve_email(claims: dict[str, Any], graph_profile: dict[str, Any]) -> str:
+    """Resolve the best available email address from identity sources.
+
+    Args:
+        claims: Verified Microsoft ID token claims.
+        graph_profile: Optional Microsoft Graph profile payload.
+
+    Returns:
+        str: First non-empty normalized email-like value, or an empty string.
+
+    Side Effects:
+        None.
+
+    Failure Modes:
+        None. Missing values simply result in an empty string.
+    """
     for candidate in (
         claims.get("preferred_username"),
         claims.get("email"),
@@ -268,6 +403,21 @@ def _resolve_email(claims: dict[str, Any], graph_profile: dict[str, Any]) -> str
 
 
 def _resolve_display_name(claims: dict[str, Any], graph_profile: dict[str, Any]) -> str | None:
+    """Resolve the best available display name from identity sources.
+
+    Args:
+        claims: Verified Microsoft ID token claims.
+        graph_profile: Optional Microsoft Graph profile payload.
+
+    Returns:
+        str | None: First non-empty display name candidate, otherwise ``None``.
+
+    Side Effects:
+        None.
+
+    Failure Modes:
+        None.
+    """
     for candidate in (
         graph_profile.get("displayName"),
         claims.get("name"),
@@ -279,6 +429,24 @@ def _resolve_display_name(claims: dict[str, Any], graph_profile: dict[str, Any])
 
 
 def _require_graph_access_token(conn: PGConnection, request: Request) -> str:
+    """Load and validate the stored Microsoft Graph access token for a session.
+
+    Args:
+        conn: Request-scoped PostgreSQL connection.
+        request: Incoming FastAPI request used to read the session cookie.
+
+    Returns:
+        str: Microsoft Graph access token associated with the session.
+
+    Side Effects:
+        Reads the stored session from the database, may delete expired sessions,
+        and may commit or roll back cleanup work.
+
+    Failure Modes:
+        Raises ``GraphAPIError`` when the session cookie is missing, the session
+        lookup fails, the session is invalid or expired, or the stored access
+        token is absent.
+    """
     session_token = request.cookies.get(SESSION_TOKEN_COOKIE_NAME)
     if not session_token:
         raise GraphAPIError(
@@ -331,6 +499,22 @@ def _require_graph_access_token(conn: PGConnection, request: Request) -> str:
 
 
 def _set_auth_cookies(response: Response, auth_tokens: AuthTokens) -> None:
+    """Write backend auth cookies after a successful SSO login.
+
+    Args:
+        response: Outgoing FastAPI response that will carry the cookies.
+        auth_tokens: Local backend token pair to serialize into cookies.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Mutates the outgoing response by setting access and refresh token
+        cookies.
+
+    Failure Modes:
+        Propagates response-cookie errors raised by the framework.
+    """
     settings = get_settings()
     response.set_cookie(
         key=ACCESS_TOKEN_COOKIE_NAME,
@@ -345,6 +529,20 @@ def _set_auth_cookies(response: Response, auth_tokens: AuthTokens) -> None:
 
 
 def _clear_state_cookie(response: Response) -> None:
+    """Delete the short-lived OAuth state cookie from a response.
+
+    Args:
+        response: Outgoing FastAPI response that should clear the state cookie.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Mutates the outgoing response by scheduling the state cookie deletion.
+
+    Failure Modes:
+        Propagates response-cookie errors raised by the framework.
+    """
     cookie_settings = build_auth_cookie_settings(max_age=0)
     response.delete_cookie(
         key=STATE_COOKIE_NAME,
@@ -361,6 +559,24 @@ def _error_response(
     message: str,
     details: dict[str, Any] | None = None,
 ) -> JSONResponse:
+    """Build a standardized JSON error response for SSO endpoints.
+
+    Args:
+        status_code: HTTP status code to return.
+        code: Stable machine-readable error code.
+        message: Human-readable error message.
+        details: Optional provider or diagnostic details.
+
+    Returns:
+        JSONResponse: Response containing the backend's standard ``error``
+        envelope.
+
+    Side Effects:
+        None beyond creating the response object.
+
+    Failure Modes:
+        None expected under normal runtime conditions.
+    """
     content: dict[str, Any] = {
         "error": {
             "code": code,

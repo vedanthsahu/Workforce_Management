@@ -1,3 +1,9 @@
+"""Repository helpers for token revocation, refresh-token rotation, and SSO sessions.
+
+This module owns the database schema and CRUD operations for revoked access
+tokens, rotating refresh tokens, and Microsoft Graph session records.
+"""
+
 from datetime import datetime, timedelta, timezone
 import secrets
 from typing import Any
@@ -7,6 +13,21 @@ from psycopg2.extensions import connection as PGConnection
 
 
 def ensure_revoked_tokens_table(conn: PGConnection) -> None:
+    """Create the revoked-token table and supporting index if missing.
+
+    Args:
+        conn: Open PostgreSQL connection.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Executes DDL statements against the database. The caller is responsible
+        for committing the transaction.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -27,6 +48,21 @@ def ensure_revoked_tokens_table(conn: PGConnection) -> None:
 
 
 def is_token_revoked(conn: PGConnection, jti: str) -> bool:
+    """Check whether an access-token identifier has been revoked.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        jti: JWT ID claim to look up.
+
+    Returns:
+        bool: ``True`` when a matching revoked-token row exists.
+
+    Side Effects:
+        Executes a ``SELECT`` query against ``revoked_tokens``.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor() as cur:
         cur.execute(
             "SELECT 1 FROM revoked_tokens WHERE jti = %s",
@@ -42,6 +78,23 @@ def revoke_token(
     user_id: str,
     expires_at: datetime,
 ) -> None:
+    """Persist a revoked access token so later checks can reject it.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        jti: JWT ID claim for the token being revoked.
+        user_id: Identifier of the token owner.
+        expires_at: Timestamp after which the revoked row can be purged.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Executes an idempotent ``INSERT`` against ``revoked_tokens``.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -54,11 +107,44 @@ def revoke_token(
 
 
 def purge_expired_revoked_tokens(conn: PGConnection) -> None:
+    """Delete revoked-token rows whose expiration has passed.
+
+    Args:
+        conn: Open PostgreSQL connection.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Executes a ``DELETE`` against ``revoked_tokens``.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor() as cur:
         cur.execute("DELETE FROM revoked_tokens WHERE expires_at <= NOW()")
 
 
 def ensure_refresh_tokens_table(conn: PGConnection) -> None:
+    """Create or migrate the refresh-token storage schema.
+
+    This helper is intentionally startup-safe: it can run repeatedly to create
+    missing tables, add new columns, and migrate the legacy ``token_id`` column
+    name to the current ``id`` field.
+
+    Args:
+        conn: Open PostgreSQL connection.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Executes DDL and migration statements against the database. The caller
+        is responsible for committing the transaction.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -78,6 +164,8 @@ def ensure_refresh_tokens_table(conn: PGConnection) -> None:
             """
             DO $$
             BEGIN
+                -- Support older deployments that originally stored the primary
+                -- key under the ``token_id`` column name.
                 IF EXISTS (
                     SELECT 1
                     FROM information_schema.columns
@@ -131,6 +219,24 @@ def store_refresh_token(
     token_hash: str,
     expires_at: datetime,
 ) -> None:
+    """Insert a newly issued refresh token record.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        token_id: Unique identifier assigned to the refresh token family node.
+        user_id: Identifier of the token owner.
+        token_hash: Server-side hash of the plaintext refresh token.
+        expires_at: Expiration timestamp for the token.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Executes an ``INSERT`` against ``refresh_tokens``.
+
+    Failure Modes:
+        Propagates database execution and constraint errors raised by psycopg2.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -150,6 +256,22 @@ def store_refresh_token(
 
 
 def fetch_refresh_token_by_hash(conn: PGConnection, token_hash: str) -> dict[str, Any] | None:
+    """Fetch one refresh-token record by its stored hash.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        token_hash: SHA-256 digest of the client-supplied refresh token.
+
+    Returns:
+        dict[str, Any] | None: Matching refresh-token row or ``None`` when the
+        token is unknown.
+
+    Side Effects:
+        Executes a ``SELECT`` query against ``refresh_tokens``.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
@@ -177,6 +299,23 @@ def revoke_refresh_token(
     token_id: str,
     replaced_by_token_id: str | None = None,
 ) -> bool:
+    """Mark an active refresh token as revoked.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        token_id: Identifier of the refresh token to revoke.
+        replaced_by_token_id: Optional identifier of the replacement token
+            issued during rotation.
+
+    Returns:
+        bool: ``True`` when an active token row was updated.
+
+    Side Effects:
+        Executes an ``UPDATE`` against ``refresh_tokens``.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -194,6 +333,22 @@ def revoke_refresh_token(
 
 
 def revoke_refresh_token_family(conn: PGConnection, *, token_id: str) -> None:
+    """Revoke a refresh token and all descendants in its rotation chain.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        token_id: Identifier of the token family node that triggered replay
+            handling.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Executes a recursive ``UPDATE`` against ``refresh_tokens``.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -219,11 +374,40 @@ def revoke_refresh_token_family(conn: PGConnection, *, token_id: str) -> None:
 
 
 def purge_expired_refresh_tokens(conn: PGConnection) -> None:
+    """Delete refresh-token rows whose expiration has passed.
+
+    Args:
+        conn: Open PostgreSQL connection.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Executes a ``DELETE`` against ``refresh_tokens``.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor() as cur:
         cur.execute("DELETE FROM refresh_tokens WHERE expires_at <= NOW()")
 
 
 def ensure_sessions_table(conn: PGConnection) -> None:
+    """Create the SSO session table and indexes if they do not exist.
+
+    Args:
+        conn: Open PostgreSQL connection.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Executes DDL statements against the database. The caller is responsible
+        for committing the transaction.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -257,6 +441,25 @@ def create_session(
     email: str,
     access_token: str,
 ) -> dict[str, Any]:
+    """Create a server-side Microsoft Graph session record.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        user_id: Identifier of the authenticated local user.
+        email: Email address associated with the session.
+        access_token: Microsoft Graph access token to persist server-side.
+
+    Returns:
+        dict[str, Any]: Inserted session row including the generated session
+        token.
+
+    Side Effects:
+        Generates a new opaque session token and executes an ``INSERT`` into
+        ``sso_sessions``.
+
+    Failure Modes:
+        Propagates database execution and constraint errors raised by psycopg2.
+    """
     session_token = secrets.token_urlsafe(48)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
@@ -277,6 +480,21 @@ def create_session(
 
 
 def get_session(conn: PGConnection, session_token: str) -> dict[str, Any] | None:
+    """Fetch a stored Microsoft Graph session by token.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        session_token: Opaque session token stored in the client's cookie.
+
+    Returns:
+        dict[str, Any] | None: Session row or ``None`` if no match exists.
+
+    Side Effects:
+        Executes a ``SELECT`` query against ``sso_sessions``.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
@@ -296,6 +514,21 @@ def get_session(conn: PGConnection, session_token: str) -> dict[str, Any] | None
 
 
 def delete_session(conn: PGConnection, session_token: str) -> bool:
+    """Delete one Microsoft Graph session record.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        session_token: Opaque session token identifying the row to delete.
+
+    Returns:
+        bool: ``True`` when a row was deleted.
+
+    Side Effects:
+        Executes a ``DELETE`` against ``sso_sessions``.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -308,6 +541,22 @@ def delete_session(conn: PGConnection, session_token: str) -> bool:
 
 
 def purge_expired_sessions(conn: PGConnection, session_ttl: int) -> None:
+    """Delete SSO sessions older than the configured TTL.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        session_ttl: Session lifetime in seconds.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Computes an absolute cutoff time and executes a ``DELETE`` against
+        ``sso_sessions``.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=session_ttl)
     with conn.cursor() as cur:
         cur.execute(

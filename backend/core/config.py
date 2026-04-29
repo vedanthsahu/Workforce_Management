@@ -1,3 +1,12 @@
+"""Runtime configuration loading for the backend service.
+
+This module centralizes environment-variable parsing and exposes an immutable
+``Settings`` object consumed throughout the application. It is responsible for
+loading local ``.env`` values during startup, coercing configuration into the
+expected types, applying compatibility defaults for older JWT settings, and
+deriving Microsoft OAuth endpoint URLs from the configured tenant.
+"""
+
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -5,10 +14,26 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
+# Load local development environment variables during import so application and
+# CLI entrypoints resolve settings from the same source of truth.
 load_dotenv()
 
 
 def _require_env(name: str) -> str:
+    """Return a required environment variable.
+
+    Args:
+        name: Name of the environment variable to read.
+
+    Returns:
+        str: The configured value.
+
+    Side Effects:
+        Reads from the current process environment.
+
+    Failure Modes:
+        Raises ``RuntimeError`` if the variable is unset or empty.
+    """
     value = os.getenv(name)
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
@@ -16,6 +41,21 @@ def _require_env(name: str) -> str:
 
 
 def _parse_int_env(name: str, default: str) -> int:
+    """Parse an integer-valued environment variable.
+
+    Args:
+        name: Name of the environment variable to read.
+        default: Fallback string value used when the variable is absent.
+
+    Returns:
+        int: The parsed integer value.
+
+    Side Effects:
+        Reads from the current process environment.
+
+    Failure Modes:
+        Raises ``RuntimeError`` if the value cannot be parsed as an integer.
+    """
     raw_value = os.getenv(name, default)
     try:
         return int(raw_value)
@@ -24,6 +64,22 @@ def _parse_int_env(name: str, default: str) -> int:
 
 
 def _parse_bool_env(name: str, default: bool) -> bool:
+    """Parse a boolean-valued environment variable.
+
+    Args:
+        name: Name of the environment variable to read.
+        default: Fallback value used when the variable is absent.
+
+    Returns:
+        bool: The normalized boolean value.
+
+    Side Effects:
+        Reads from the current process environment.
+
+    Failure Modes:
+        Raises ``RuntimeError`` if the value is present but does not match one
+        of the accepted boolean spellings.
+    """
     raw_value = os.getenv(name)
     if raw_value is None:
         return default
@@ -37,6 +93,22 @@ def _parse_bool_env(name: str, default: bool) -> bool:
 
 
 def _parse_list_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Parse a comma-delimited environment variable into a tuple.
+
+    Args:
+        name: Name of the environment variable to read.
+        default: Fallback tuple used when the variable is absent.
+
+    Returns:
+        tuple[str, ...]: The normalized sequence of non-empty values.
+
+    Side Effects:
+        Reads from the current process environment.
+
+    Failure Modes:
+        Raises ``RuntimeError`` if the variable is present but does not contain
+        any non-empty entries after trimming.
+    """
     raw_value = os.getenv(name)
     if raw_value is None:
         return default
@@ -48,6 +120,22 @@ def _parse_list_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _parse_samesite_env(name: str, default: str) -> str:
+    """Parse a cookie ``SameSite`` policy from the environment.
+
+    Args:
+        name: Name of the environment variable to read.
+        default: Fallback value used when the variable is absent.
+
+    Returns:
+        str: One of ``"lax"``, ``"strict"``, or ``"none"``.
+
+    Side Effects:
+        Reads from the current process environment.
+
+    Failure Modes:
+        Raises ``RuntimeError`` if the configured value is outside the allowed
+        set of cookie policies.
+    """
     value = os.getenv(name, default).strip().lower()
     if value not in {"lax", "strict", "none"}:
         raise RuntimeError(f"{name} must be one of: lax, strict, none")
@@ -55,11 +143,33 @@ def _parse_samesite_env(name: str, default: str) -> str:
 
 
 def _is_https_url(url: str) -> bool:
+    """Determine whether a configured URL uses HTTPS.
+
+    Args:
+        url: URL string to inspect.
+
+    Returns:
+        bool: ``True`` when the parsed scheme is HTTPS.
+
+    Side Effects:
+        None.
+
+    Failure Modes:
+        None. Invalid or scheme-less URLs simply return ``False``.
+    """
     return urlparse(url).scheme.lower() == "https"
 
 
 @dataclass(frozen=True)
 class Settings:
+    """Immutable runtime configuration for the backend application.
+
+    Instances of this dataclass are created once by :func:`get_settings` and
+    then shared across the process. The attributes combine raw environment
+    values with derived fields such as OAuth endpoint URLs and PostgreSQL
+    connection settings.
+    """
+
     db_host: str
     db_name: str
     db_user: str
@@ -86,6 +196,18 @@ class Settings:
 
     @property
     def db_config(self) -> dict[str, object]:
+        """Return connection arguments expected by ``psycopg2.connect``.
+
+        Returns:
+            dict[str, object]: Keyword arguments suitable for establishing a
+            PostgreSQL connection.
+
+        Side Effects:
+            None.
+
+        Failure Modes:
+            None. The property only exposes already-validated configuration.
+        """
         return {
             "host": self.db_host,
             "dbname": self.db_name,
@@ -99,18 +221,40 @@ class Settings:
 
 @lru_cache
 def get_settings() -> Settings:
+    """Build and cache the backend settings object.
+
+    The function is process-global and memoized so repeated callers share one
+    immutable configuration snapshot instead of reparsing environment variables
+    on every request.
+
+    Returns:
+        Settings: Parsed and derived runtime configuration.
+
+    Side Effects:
+        Reads environment variables and may load compatibility defaults from the
+        legacy ``JWT_EXPIRE_HOURS`` setting when the newer access-token TTL is
+        not provided.
+
+    Failure Modes:
+        Raises ``RuntimeError`` when required variables are missing or when any
+        typed setting cannot be parsed.
+    """
     tenant_id = _require_env("TENANT_ID")
     frontend_url = _require_env("FRONTEND_URL").rstrip("/")
     redirect_uri = _require_env("REDIRECT_URI")
     access_token_ttl = os.getenv("JWT_ACCESS_TOKEN_TTL")
     if access_token_ttl is None:
         legacy_expire_hours = os.getenv("JWT_EXPIRE_HOURS")
+        # Preserve compatibility with older deployments that still configure
+        # access-token duration in hours instead of seconds.
         access_token_ttl = (
             str(_parse_int_env("JWT_EXPIRE_HOURS", "1") * 3600)
             if legacy_expire_hours is not None
             else "900"
         )
 
+    # Default secure cookies when either the frontend or OAuth callback uses
+    # HTTPS, while still allowing explicit environment overrides.
     cookie_secure_default = _is_https_url(frontend_url) or _is_https_url(redirect_uri)
 
     return Settings(

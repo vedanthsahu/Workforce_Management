@@ -1,3 +1,10 @@
+"""Authentication service-layer orchestration.
+
+This module coordinates local signup, login, refresh-token rotation, and
+logout flows by combining repository operations, password and JWT helpers,
+transaction handling, and HTTP-oriented error translation.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -32,11 +39,27 @@ from backend.schemas.auth import LoginRequest, MessageResponse, SignupRequest, U
 
 @dataclass(frozen=True)
 class AuthTokens:
+    """Access and refresh tokens issued together for one authenticated session."""
+
     access_token: str
     refresh_token: str
 
 
 def _rollback_if_needed(conn: PGConnection) -> None:
+    """Rollback the current transaction only when the connection is active.
+
+    Args:
+        conn: Open PostgreSQL connection that may or may not be mid-transaction.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Issues ``ROLLBACK`` on the connection when a transaction is open.
+
+    Failure Modes:
+        Propagates rollback failures from psycopg2.
+    """
     if conn.closed:
         return
     if conn.get_transaction_status() != TRANSACTION_STATUS_IDLE:
@@ -44,6 +67,22 @@ def _rollback_if_needed(conn: PGConnection) -> None:
 
 
 def _build_access_token_for_user(user: dict[str, Any]) -> str:
+    """Build and sign an access token using user profile data.
+
+    Args:
+        user: User record supplying required identity fields and optional claims
+            such as role or tenant.
+
+    Returns:
+        str: Signed JWT access token.
+
+    Side Effects:
+        Reads shared settings and uses JWT helpers for signing.
+
+    Failure Modes:
+        Propagates payload-validation and signing errors raised by the security
+        helpers.
+    """
     extra_claims: dict[str, Any] = {}
 
     role = str(user.get("role") or "").strip()
@@ -67,6 +106,25 @@ def _persist_auth_tokens(
     user: dict[str, Any],
     rotate_from_token_id: str | None = None,
 ) -> AuthTokens:
+    """Store refresh-token state and return the issued token pair.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        user: User record for which tokens are being issued.
+        rotate_from_token_id: Existing refresh-token identifier to revoke as
+            part of rotation, if any.
+
+    Returns:
+        AuthTokens: Newly issued access and refresh tokens.
+
+    Side Effects:
+        Inserts a refresh-token row, optionally revokes the previous token in
+        the family, and depends on the caller to commit the transaction.
+
+    Failure Modes:
+        Raises ``HTTPException`` when rotation fails because the source token is
+        no longer active. Propagates database errors from repository helpers.
+    """
     refresh_data = create_refresh_token()
     access_token = _build_access_token_for_user(user)
 
@@ -100,6 +158,23 @@ def _persist_auth_tokens(
 
 
 def signup_user(conn: PGConnection, payload: SignupRequest) -> UserResponse:
+    """Create a new locally authenticated user account.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        payload: Validated signup request body.
+
+    Returns:
+        UserResponse: Newly created user record.
+
+    Side Effects:
+        Performs user lookup, password hashing, user insertion, and transaction
+        commit or rollback.
+
+    Failure Modes:
+        Raises ``HTTPException`` for duplicate email addresses or database
+        failures encountered during user creation.
+    """
     normalized_email = payload.email.strip().lower()
     try:
         existing_user = fetch_user_by_email(conn, normalized_email)
@@ -139,6 +214,23 @@ def signup_user(conn: PGConnection, payload: SignupRequest) -> UserResponse:
 
 
 def login_user(conn: PGConnection, payload: LoginRequest) -> AuthTokens:
+    """Authenticate a local user and issue a fresh token pair.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        payload: Validated login request body.
+
+    Returns:
+        AuthTokens: Access and refresh tokens for the authenticated user.
+
+    Side Effects:
+        Reads user credentials from the database, verifies a bcrypt password,
+        creates refresh-token state, and commits or rolls back the transaction.
+
+    Failure Modes:
+        Raises ``HTTPException`` for invalid credentials, lookup failures, or
+        token issuance errors.
+    """
     normalized_email = payload.email.strip().lower()
     try:
         user = fetch_user_by_email(conn, normalized_email)
@@ -184,6 +276,25 @@ def issue_tokens_for_user(
     *,
     commit: bool = True,
 ) -> AuthTokens:
+    """Issue access and refresh tokens for an existing user record.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        user: User record to encode into the access token.
+        commit: Whether this helper should commit on success and rollback on
+            failure.
+
+    Returns:
+        AuthTokens: Newly issued access and refresh tokens.
+
+    Side Effects:
+        Persists refresh-token state and may commit or rollback the current
+        transaction depending on the ``commit`` flag.
+
+    Failure Modes:
+        Raises ``HTTPException`` when token persistence fails or a database
+        error occurs.
+    """
     try:
         auth_tokens = _persist_auth_tokens(conn, user=user)
         if commit:
@@ -211,6 +322,25 @@ def refresh_auth_tokens(
     *,
     commit: bool = True,
 ) -> AuthTokens:
+    """Rotate a refresh token and issue a replacement access token pair.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        refresh_token: Plaintext refresh token supplied by the client.
+        commit: Whether this helper should commit on success and rollback on
+            failure.
+
+    Returns:
+        AuthTokens: Replacement access and refresh tokens.
+
+    Side Effects:
+        Reads and updates refresh-token rows, may revoke an entire token family
+        when replay is detected, and may commit or rollback the transaction.
+
+    Failure Modes:
+        Raises ``HTTPException`` for missing, invalid, revoked, replayed,
+        expired, or userless refresh tokens, as well as database failures.
+    """
     try:
         token_hash = hash_token(refresh_token)
     except TokenError as exc:
@@ -315,6 +445,24 @@ def logout_user(
     *,
     refresh_token: str | None,
 ) -> MessageResponse:
+    """Best-effort logout that revokes the presented refresh token.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        refresh_token: Plaintext refresh token from the client cookie, if any.
+
+    Returns:
+        MessageResponse: Stable logout confirmation response.
+
+    Side Effects:
+        Hashes and looks up the refresh token when present, revokes it if still
+        active, and commits or rolls back the transaction.
+
+    Failure Modes:
+        Raises ``HTTPException`` only for database failures during logout.
+        Invalid or missing refresh tokens are intentionally treated as a
+        successful logout.
+    """
     if not refresh_token:
         return MessageResponse(message="Logged out successfully")
 

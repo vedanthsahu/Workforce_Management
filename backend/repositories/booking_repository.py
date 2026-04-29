@@ -1,3 +1,9 @@
+"""Booking-related repository functions.
+
+This module contains the SQL queries used to create bookings, list a user's
+bookings, and compute seat availability for a requested time window.
+"""
+
 from datetime import datetime
 from typing import Any
 
@@ -13,6 +19,25 @@ def create_booking(
     start_time: datetime,
     end_time: datetime,
 ) -> dict[str, Any]:
+    """Insert a confirmed booking row and return the created record.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        seat_id: Identifier of the seat being reserved.
+        user_id: Identifier of the user creating the booking.
+        start_time: Inclusive booking start timestamp.
+        end_time: Exclusive booking end timestamp.
+
+    Returns:
+        dict[str, Any]: Created booking row normalized for API use.
+
+    Side Effects:
+        Executes an ``INSERT`` against the ``bookings`` table. Commit control is
+        delegated to the caller.
+
+    Failure Modes:
+        Propagates database constraint and execution errors raised by psycopg2.
+    """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
@@ -40,6 +65,22 @@ def create_booking(
 
 
 def fetch_bookings_for_user(conn: PGConnection, *, user_id: str) -> list[dict[str, Any]]:
+    """Fetch bookings owned by a user, newest first.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        user_id: Identifier of the user whose bookings should be returned.
+
+    Returns:
+        list[dict[str, Any]]: Booking rows enriched with a database-derived
+        status label based on time and cancellation state.
+
+    Side Effects:
+        Executes a ``SELECT`` query against the ``bookings`` table.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
@@ -74,6 +115,24 @@ def fetch_available_seats(
     start_time: datetime,
     end_time: datetime,
 ) -> list[dict[str, Any]]:
+    """Fetch seats not blocked by bookings or seat blocks in a time window.
+
+    Args:
+        conn: Open PostgreSQL connection.
+        floor_id: Numeric floor identifier used to scope the search.
+        start_time: Inclusive start of the requested booking window.
+        end_time: Exclusive end of the requested booking window.
+
+    Returns:
+        list[dict[str, Any]]: Seat records available for the entire interval.
+
+    Side Effects:
+        Executes a ``SELECT`` query that checks overlap against both
+        ``bookings`` and ``seat_blocks``.
+
+    Failure Modes:
+        Propagates database execution errors raised by psycopg2.
+    """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """

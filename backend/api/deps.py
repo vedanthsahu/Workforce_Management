@@ -1,3 +1,9 @@
+"""Shared FastAPI dependencies for authenticated backend routes.
+
+This module centralizes access-token extraction, automatic refresh-token
+handling, current-user lookup, and shared cookie helpers used by the API layer.
+"""
+
 from typing import Any, Annotated
 
 import psycopg2
@@ -28,6 +34,31 @@ def get_auth_context(
     conn: Annotated[PGConnection, Depends(get_db)],
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
 ) -> dict[str, Any]:
+    """Resolve the authenticated request context from cookies or bearer auth.
+
+    Args:
+        request: Incoming FastAPI request, used to read cookies and stash
+            resolved claims on ``request.state``.
+        response: Outgoing FastAPI response, used to refresh or clear auth
+            cookies during dependency resolution.
+        conn: Request-scoped PostgreSQL connection.
+        credentials: Optional bearer token extracted from the Authorization
+            header when cookies are absent.
+
+    Returns:
+        dict[str, Any]: Dictionary containing normalized auth claims and the raw
+        decoded token payload.
+
+    Side Effects:
+        Reads auth cookies, may refresh expired access tokens through the
+        service layer, may set or clear response cookies, and stores claims on
+        ``request.state`` for downstream consumers.
+
+    Failure Modes:
+        Raises ``HTTPException`` when no usable access or refresh token is
+        available, when token validation fails, or when required claims are
+        missing from the decoded payload.
+    """
     token = request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)
     if token is None and credentials is not None:
         token = credentials.credentials
@@ -44,6 +75,9 @@ def get_auth_context(
     try:
         token_payload = decode_token(token)
     except ExpiredTokenError:
+        # Expired access tokens are refreshed transparently when a valid refresh
+        # token cookie is present, so protected routes can recover in one round
+        # trip instead of forcing the frontend to retry manually.
         refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
         if not refresh_token:
             _clear_auth_cookies(response)
@@ -117,6 +151,25 @@ def get_current_user(
     auth_context: Annotated[dict[str, Any], Depends(get_auth_context)],
     conn: Annotated[PGConnection, Depends(get_db)],
 ) -> dict[str, Any]:
+    """Load the current authenticated user record from the database.
+
+    Args:
+        request: Incoming FastAPI request, used to cache the resolved user on
+            ``request.state``.
+        auth_context: Auth claims resolved by :func:`get_auth_context`.
+        conn: Request-scoped PostgreSQL connection.
+
+    Returns:
+        dict[str, Any]: Current user record returned by the repository layer.
+
+    Side Effects:
+        Queries the database for the authenticated user and stores the result on
+        ``request.state`` for downstream handlers.
+
+    Failure Modes:
+        Raises ``HTTPException`` when user lookup fails or when the referenced
+        user record no longer exists.
+    """
     user_id = auth_context["claims"]["user_id"]
 
     try:
@@ -144,6 +197,21 @@ def get_current_user(
 
 
 def _set_auth_cookies(response: Response, auth_tokens: AuthTokens) -> None:
+    """Write access and refresh token cookies onto a response.
+
+    Args:
+        response: Outgoing FastAPI response that will carry the cookies.
+        auth_tokens: Token pair to serialize into cookies.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Mutates the outgoing response by setting HTTP-only auth cookies.
+
+    Failure Modes:
+        Propagates response-cookie errors raised by the framework.
+    """
     response.set_cookie(
         key=ACCESS_TOKEN_COOKIE_NAME,
         value=auth_tokens.access_token,
@@ -157,6 +225,21 @@ def _set_auth_cookies(response: Response, auth_tokens: AuthTokens) -> None:
 
 
 def _clear_auth_cookies(response: Response) -> None:
+    """Delete all backend-managed authentication cookies from a response.
+
+    Args:
+        response: Outgoing FastAPI response that should clear auth state.
+
+    Returns:
+        None.
+
+    Side Effects:
+        Mutates the outgoing response by scheduling cookie deletions for local
+        auth and Microsoft Graph session cookies.
+
+    Failure Modes:
+        Propagates response-cookie errors raised by the framework.
+    """
     cookie_settings = build_auth_cookie_settings(max_age=0)
     response.delete_cookie(
         key=ACCESS_TOKEN_COOKIE_NAME,
@@ -182,8 +265,32 @@ def _clear_auth_cookies(response: Response) -> None:
 
 
 def _access_token_ttl_seconds() -> int:
+    """Return the configured access-token lifetime in seconds.
+
+    Returns:
+        int: Access-token TTL from cached runtime settings.
+
+    Side Effects:
+        Reads cached application configuration.
+
+    Failure Modes:
+        Propagates configuration-loading errors if settings initialization has
+        not yet succeeded.
+    """
     return get_settings().jwt_access_token_ttl
 
 
 def _refresh_token_ttl_seconds() -> int:
+    """Return the configured refresh-token lifetime in seconds.
+
+    Returns:
+        int: Refresh-token TTL from cached runtime settings.
+
+    Side Effects:
+        Reads cached application configuration.
+
+    Failure Modes:
+        Propagates configuration-loading errors if settings initialization has
+        not yet succeeded.
+    """
     return get_settings().jwt_refresh_token_ttl

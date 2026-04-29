@@ -1,3 +1,10 @@
+"""Microsoft SSO and Graph integration helpers.
+
+This module encapsulates the OAuth authorization-code exchange with Microsoft,
+ID token verification against tenant JWKS keys, and selected Microsoft Graph
+API calls used by the backend's SSO flow.
+"""
+
 from __future__ import annotations
 
 import secrets
@@ -25,12 +32,31 @@ MICROSOFT_SCOPES = (
 
 @dataclass(frozen=True)
 class SSOError(Exception):
+    """Structured exception used for OAuth and token-verification failures.
+
+    The route layer converts this error directly into a public API response
+    without needing to infer status codes or provider details from raw
+    exceptions.
+    """
+
     status_code: int
     code: str
     message: str
     details: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the error into the backend's public error shape.
+
+        Returns:
+            dict[str, Any]: Dictionary containing the stable error code,
+            message, and optional detail payload.
+
+        Side Effects:
+            None.
+
+        Failure Modes:
+            None expected under normal runtime conditions.
+        """
         payload: dict[str, Any] = {
             "code": self.code,
             "message": self.message,
@@ -41,10 +67,25 @@ class SSOError(Exception):
 
 
 class GraphAPIError(SSOError):
+    """Structured exception for Microsoft Graph request failures."""
+
     pass
 
 
 def build_auth_url() -> tuple[str, str]:
+    """Create the Microsoft authorization URL and CSRF state token.
+
+    Returns:
+        tuple[str, str]: The redirect URL for Microsoft login and the generated
+        opaque state value that should be stored client-side.
+
+    Side Effects:
+        Uses cryptographically secure randomness and reads cached settings.
+
+    Failure Modes:
+        Propagates configuration-loading errors if required OAuth settings are
+        missing or invalid.
+    """
     settings = get_settings()
     state = secrets.token_urlsafe(32)
     query = urlencode(
@@ -62,6 +103,23 @@ def build_auth_url() -> tuple[str, str]:
 
 
 def exchange_code_for_token(code: str) -> dict[str, str]:
+    """Exchange a Microsoft authorization code for tokens.
+
+    Args:
+        code: Authorization code returned by Microsoft after user consent.
+
+    Returns:
+        dict[str, str]: Mapping containing the ``access_token`` and
+        ``id_token`` issued by Microsoft.
+
+    Side Effects:
+        Performs an outbound HTTP POST to the Microsoft token endpoint.
+
+    Failure Modes:
+        Raises ``SSOError`` when the code is missing, the provider is
+        unreachable, the response is unsuccessful, or required tokens are
+        absent from the provider payload.
+    """
     settings = get_settings()
     if not code:
         raise SSOError(
@@ -123,6 +181,21 @@ def exchange_code_for_token(code: str) -> dict[str, str]:
 
 
 def verify_id_token(id_token: str) -> dict[str, Any]:
+    """Validate a Microsoft ID token against tenant signing keys.
+
+    Args:
+        id_token: Encoded Microsoft ID token.
+
+    Returns:
+        dict[str, Any]: Decoded and verified token claims.
+
+    Side Effects:
+        Fetches the current tenant JWKS document over the network.
+
+    Failure Modes:
+        Raises ``SSOError`` when the token is missing, expired, invalid, signed
+        with an unknown key, or issued for the wrong tenant.
+    """
     settings = get_settings()
     if not id_token:
         raise SSOError(
@@ -166,6 +239,21 @@ def verify_id_token(id_token: str) -> dict[str, Any]:
 
 
 def fetch_graph_me(access_token: str) -> dict[str, Any]:
+    """Fetch the signed-in Microsoft user's profile from Graph.
+
+    Args:
+        access_token: Microsoft Graph bearer token.
+
+    Returns:
+        dict[str, Any]: Provider response for the ``/me`` endpoint.
+
+    Side Effects:
+        Performs an outbound HTTP GET to Microsoft Graph.
+
+    Failure Modes:
+        Raises ``GraphAPIError`` when the token is missing or the request
+        cannot be completed successfully.
+    """
     return _graph_get(
         access_token,
         "/me",
@@ -176,6 +264,21 @@ def fetch_graph_me(access_token: str) -> dict[str, Any]:
 
 
 def fetch_graph_groups(access_token: str) -> dict[str, Any]:
+    """Fetch Microsoft Graph group memberships for the signed-in user.
+
+    Args:
+        access_token: Microsoft Graph bearer token.
+
+    Returns:
+        dict[str, Any]: Provider response for the ``/me/memberOf`` endpoint.
+
+    Side Effects:
+        Performs an outbound HTTP GET to Microsoft Graph.
+
+    Failure Modes:
+        Raises ``GraphAPIError`` when the token is missing or the request
+        cannot be completed successfully.
+    """
     return _graph_get(
         access_token,
         "/me/memberOf",
@@ -184,10 +287,37 @@ def fetch_graph_groups(access_token: str) -> dict[str, Any]:
 
 
 def fetch_graph_manager(access_token: str) -> dict[str, Any]:
+    """Fetch the signed-in user's manager relationship from Microsoft Graph.
+
+    Args:
+        access_token: Microsoft Graph bearer token.
+
+    Returns:
+        dict[str, Any]: Provider response for the ``/me/manager`` endpoint.
+
+    Side Effects:
+        Performs an outbound HTTP GET to Microsoft Graph.
+
+    Failure Modes:
+        Raises ``GraphAPIError`` when the token is missing or the request
+        cannot be completed successfully.
+    """
     return _graph_get(access_token, "/me/manager")
 
 
 def _fetch_jwks() -> dict[str, Any]:
+    """Fetch the tenant JWKS document used to verify Microsoft ID tokens.
+
+    Returns:
+        dict[str, Any]: JWKS payload returned by Microsoft.
+
+    Side Effects:
+        Performs an outbound HTTP GET to the configured JWKS endpoint.
+
+    Failure Modes:
+        Raises ``SSOError`` if the provider is unreachable or the response does
+        not contain at least one signing key.
+    """
     settings = get_settings()
     try:
         response = requests.get(settings.jwks_url, timeout=10)
@@ -211,6 +341,22 @@ def _fetch_jwks() -> dict[str, Any]:
 
 
 def _resolve_signing_key(id_token: str, jwks: dict[str, Any]) -> dict[str, Any]:
+    """Select the JWKS entry matching the token's ``kid`` header.
+
+    Args:
+        id_token: Encoded Microsoft ID token.
+        jwks: Previously fetched JWKS document.
+
+    Returns:
+        dict[str, Any]: Matching signing-key record from the JWKS payload.
+
+    Side Effects:
+        None.
+
+    Failure Modes:
+        Raises ``SSOError`` when the token header cannot be parsed or no
+        corresponding signing key is found.
+    """
     try:
         header = jwt.get_unverified_header(id_token)
     except JWTError as exc:
@@ -238,6 +384,24 @@ def _graph_get(
     *,
     params: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    """Perform an authenticated GET request against Microsoft Graph.
+
+    Args:
+        access_token: Microsoft Graph bearer token.
+        path: Endpoint path relative to the Graph base URL.
+        params: Optional query parameters forwarded to Graph.
+
+    Returns:
+        dict[str, Any]: Parsed JSON payload returned by Graph.
+
+    Side Effects:
+        Performs an outbound HTTP GET request.
+
+    Failure Modes:
+        Raises ``GraphAPIError`` for missing access tokens, network failures,
+        permission issues, missing resources, or other unsuccessful provider
+        responses.
+    """
     if not access_token:
         raise GraphAPIError(
             status_code=401,
@@ -286,6 +450,21 @@ def _graph_get(
 
 
 def _safe_json(response: requests.Response) -> dict[str, Any]:
+    """Parse a provider response body into a dictionary when possible.
+
+    Args:
+        response: HTTP response returned by ``requests``.
+
+    Returns:
+        dict[str, Any]: JSON object payload, wrapped non-dict JSON content, or
+        an empty dictionary when the response body is empty or invalid JSON.
+
+    Side Effects:
+        Consumes the response body for JSON decoding.
+
+    Failure Modes:
+        None. Invalid JSON is treated as an empty payload.
+    """
     if not response.content:
         return {}
     try:
@@ -296,6 +475,21 @@ def _safe_json(response: requests.Response) -> dict[str, Any]:
 
 
 def _provider_error_details(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract provider-specific error fields for downstream API responses.
+
+    Args:
+        payload: Parsed provider response payload.
+
+    Returns:
+        dict[str, Any] | None: Reduced error details when recognizable provider
+        error fields exist, otherwise the original payload or ``None``.
+
+    Side Effects:
+        None.
+
+    Failure Modes:
+        None. Missing or partial fields simply produce a smaller detail object.
+    """
     if not payload:
         return None
 
