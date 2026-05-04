@@ -258,7 +258,11 @@ def fetch_graph_me(access_token: str) -> dict[str, Any]:
         access_token,
         "/me",
         params={
-            "$select": "id,displayName,mail,userPrincipalName,jobTitle,department,companyName",
+            "$select": (
+                "id,displayName,givenName,surname,mail,userPrincipalName,"
+                "mobilePhone,businessPhones,jobTitle,department,companyName,"
+                "employeeId,officeLocation,city,state,country"
+            ),
         },
     )
 

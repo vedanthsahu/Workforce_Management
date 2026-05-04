@@ -1,103 +1,85 @@
-"""HTTP routes for authenticated booking operations.
+"""HTTP routes for authenticated booking operations."""
 
-This module exposes endpoints to create bookings, list a user's bookings, and
-query seat availability. All routes depend on resolved authentication context.
-"""
+from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from psycopg2.extensions import connection as PGConnection
 
-from backend.api.deps import get_auth_context
+from backend.api.deps import get_current_user
 from backend.db.connection import get_db
 from backend.schemas.booking import AvailableSeatResponse, BookingResponse, CreateBookingRequest
 from backend.services.booking_service import book_seat, get_available_seats, get_user_bookings
 
-router = APIRouter(prefix="/bookings", tags=["bookings"], dependencies=[Depends(get_auth_context)])
+router = APIRouter(prefix="/bookings", tags=["bookings"])
 
 
-@router.post("", response_model=BookingResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=BookingResponse, status_code=201)
 def create_booking(
     payload: CreateBookingRequest,
-    auth_context: Annotated[dict[str, Any], Depends(get_auth_context)],
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
     conn: Annotated[PGConnection, Depends(get_db)],
 ) -> BookingResponse:
-    """Create a booking for the authenticated user.
-
-    Args:
-        payload: Validated booking request body.
-        auth_context: Claims resolved by the authentication dependency.
-        conn: Request-scoped PostgreSQL connection.
-
-    Returns:
-        BookingResponse: Created booking record.
-
-    Side Effects:
-        Delegates to the booking service, which performs validation and
-        database writes.
-
-    Failure Modes:
-        Propagates ``HTTPException`` instances raised by the service layer.
-    """
-    return book_seat(
-        conn,
-        user_id=auth_context["claims"]["user_id"],
-        payload=payload,
-    )
+    return book_seat(conn, current_user=current_user, payload=payload)
 
 
-@router.get("", response_model=list[BookingResponse])
-def fetch_bookings(
-    auth_context: Annotated[dict[str, Any], Depends(get_auth_context)],
+@router.get("/me", response_model=list[BookingResponse])
+def fetch_my_bookings(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
     conn: Annotated[PGConnection, Depends(get_db)],
 ) -> list[BookingResponse]:
-    """Return bookings owned by the authenticated user.
-
-    Args:
-        auth_context: Claims resolved by the authentication dependency.
-        conn: Request-scoped PostgreSQL connection.
-
-    Returns:
-        list[BookingResponse]: Booking records for the current user.
-
-    Side Effects:
-        Delegates to the booking service for database reads.
-
-    Failure Modes:
-        Propagates ``HTTPException`` instances raised by the service layer.
-    """
-    return get_user_bookings(conn, user_id=auth_context["claims"]["user_id"])
+    return get_user_bookings(conn, current_user=current_user)
 
 
 @router.get("/available", response_model=list[AvailableSeatResponse])
 def available_seats(
     floor_id: Annotated[int, Query(gt=0)],
-    start_time: datetime,
-    end_time: datetime,
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
     conn: Annotated[PGConnection, Depends(get_db)],
+    booking_date: date | None = None,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
 ) -> list[AvailableSeatResponse]:
-    """Return seats available on a floor for the requested time interval.
-
-    Args:
-        floor_id: Positive floor identifier provided as a query parameter.
-        start_time: Requested booking start timestamp.
-        end_time: Requested booking end timestamp.
-        conn: Request-scoped PostgreSQL connection.
-
-    Returns:
-        list[AvailableSeatResponse]: Seats that are free for the interval.
-
-    Side Effects:
-        Delegates to the booking service for validation and database reads.
-
-    Failure Modes:
-        Propagates ``HTTPException`` instances raised by the service layer.
-    """
+    resolved_booking_date = _resolve_booking_date(booking_date, start_time, end_time)
     return get_available_seats(
         conn,
-        floor_id=floor_id,
-        start_time=start_time,
-        end_time=end_time,
+        tenant_id=str(current_user["tenant_id"]),
+        floor_id=str(floor_id),
+        booking_date=resolved_booking_date,
     )
+
+
+def _resolve_booking_date(
+    booking_date: date | None,
+    start_time: datetime | None,
+    end_time: datetime | None,
+) -> date:
+    if booking_date is not None:
+        return booking_date
+    if start_time is None or end_time is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "missing_booking_date",
+                "message": "Provide booking_date or both start_time and end_time.",
+            },
+        )
+    if start_time > end_time:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "invalid_booking_window",
+                "message": "start_time must be earlier than end_time.",
+            },
+        )
+    if start_time.date() != end_time.date():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "invalid_booking_window",
+                "message": "Seat availability queries must stay within one day.",
+            },
+        )
+    return start_time.date()

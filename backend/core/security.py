@@ -1,9 +1,4 @@
-"""Security helpers for local authentication and token handling.
-
-This module owns password hashing, JWT payload construction and validation,
-HTTP cookie defaults for auth tokens, refresh-token generation, and the
-process-global registry of claim hooks used to augment JWT claims.
-"""
+"""Security helpers for authentication and token handling."""
 
 from __future__ import annotations
 
@@ -12,9 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 import hashlib
 import secrets
-import uuid
 
-import bcrypt
 import jwt
 
 from backend.core.config import get_settings
@@ -28,7 +21,9 @@ ClaimHook = Callable[[dict[str, Any]], dict[str, Any]]
 # Claim hooks are process-global and applied to every access token payload
 # created after registration.
 CLAIM_HOOKS: list[ClaimHook] = []
-ALLOWED_CLAIMS = frozenset({"sub", "email", "role", "tenant", "iat", "exp"})
+ALLOWED_CLAIMS = frozenset(
+    {"user_id", "sub", "email", "role", "tenant_id", "session_id", "iat", "exp"}
+)
 
 
 class TokenError(Exception):
@@ -71,55 +66,6 @@ def register_claim_hook(hook: ClaimHook) -> None:
     CLAIM_HOOKS.append(hook)
 
 
-def hash_password(password: str) -> str:
-    """Hash a plaintext password for storage.
-
-    Args:
-        password: User-supplied plaintext password. It must be non-empty.
-
-    Returns:
-        str: A bcrypt password hash encoded as UTF-8 text.
-
-    Side Effects:
-        Performs CPU-intensive bcrypt hashing.
-
-    Failure Modes:
-        Raises ``ValueError`` if the password is empty.
-    """
-    if not password:
-        raise ValueError("Password cannot be empty")
-    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
-    return password_hash.decode("utf-8")
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    """Check whether a plaintext password matches a stored bcrypt hash.
-
-    Args:
-        password: Plaintext password to verify.
-        password_hash: Stored bcrypt hash as text.
-
-    Returns:
-        bool: ``True`` when the password matches the stored hash.
-
-    Side Effects:
-        Performs bcrypt verification work.
-
-    Failure Modes:
-        Returns ``False`` for missing inputs or malformed hash values instead of
-        propagating bcrypt parsing errors.
-    """
-    if not password or not password_hash:
-        return False
-    try:
-        return bcrypt.checkpw(
-            password.encode("utf-8"),
-            password_hash.encode("utf-8"),
-        )
-    except ValueError:
-        return False
-
-
 def build_jwt_payload(
     user: dict[str, Any],
     *,
@@ -154,16 +100,19 @@ def build_jwt_payload(
     email = str(user.get("email") or "").strip().lower()
     if not subject:
         raise ValueError("user_id is required to build a JWT payload")
-    if not email:
-        raise ValueError("email is required to build a JWT payload")
 
     issued_at = int(datetime.now(timezone.utc).timestamp())
     payload: dict[str, Any] = {
+        "user_id": subject,
         "sub": subject,
-        "email": email,
         "iat": issued_at,
         "exp": issued_at + settings.jwt_access_token_ttl,
     }
+    if email:
+        payload["email"] = email
+    tenant_id = str(user.get("tenant_id") or "").strip()
+    if tenant_id:
+        payload["tenant_id"] = tenant_id
 
     if extra_claims:
         payload.update(extra_claims)
@@ -179,6 +128,7 @@ def build_jwt_payload(
     # Strip claims not explicitly allowed by configuration before signing to
     # keep tokens stable and avoid leaking incidental user attributes.
     allowed_claims = set(settings.jwt_allowed_claims) or set(ALLOWED_CLAIMS)
+    allowed_claims.update({"user_id", "tenant_id", "iat", "exp"})
     payload = {
         key: value
         for key, value in payload.items()
@@ -230,6 +180,9 @@ def decode_token(token: str, *, verify_exp: bool = True) -> dict[str, Any]:
         Raises ``ExpiredTokenError`` for expired tokens and ``TokenError`` for
         other JWT validation failures.
     """
+    if is_microsoft_token(token):
+        raise TokenError("Microsoft tokens are not accepted by backend APIs. Use the backend-issued access token.")
+
     settings = get_settings()
     try:
         return jwt.decode(
@@ -242,6 +195,35 @@ def decode_token(token: str, *, verify_exp: bool = True) -> dict[str, Any]:
         raise ExpiredTokenError("Token has expired") from exc
     except jwt.InvalidTokenError as exc:
         raise TokenError("Invalid authentication token") from exc
+
+
+def is_microsoft_token(token: str) -> bool:
+    """Return True when a JWT appears to be issued by Microsoft Entra ID."""
+    normalized = str(token or "").strip()
+    if not normalized:
+        return False
+
+    try:
+        payload = jwt.decode(
+            normalized,
+            options={
+                "verify_signature": False,
+                "verify_exp": False,
+                "verify_aud": False,
+            },
+        )
+    except jwt.InvalidTokenError:
+        return False
+
+    issuer = str(payload.get("iss") or "").lower()
+    audience = str(payload.get("aud") or "").lower()
+    has_microsoft_issuer = "login.microsoftonline.com" in issuer or "sts.windows.net" in issuer
+    has_microsoft_identity_claims = bool(payload.get("tid") or payload.get("oid"))
+    has_microsoft_graph_audience = audience in {
+        "00000003-0000-0000-c000-000000000000",
+        "https://graph.microsoft.com",
+    }
+    return has_microsoft_issuer or (has_microsoft_identity_claims and has_microsoft_graph_audience)
 
 
 def build_auth_cookie_settings(*, max_age: int) -> dict[str, Any]:
@@ -270,26 +252,19 @@ def build_auth_cookie_settings(*, max_age: int) -> dict[str, Any]:
     }
 
 
-def create_refresh_token() -> dict[str, Any]:
-    """Generate a refresh token and its persistent metadata.
-
-    Returns:
-        dict[str, Any]: Token identifier, plaintext token, token hash, and
-        expiration timestamp.
-
-    Side Effects:
-        Uses cryptographically secure randomness and reads cached JWT TTL
-        configuration.
-
-    Failure Modes:
-        None expected under normal runtime conditions.
-    """
+def create_scoped_refresh_token(
+    *,
+    tenant_id: str,
+    user_id: str,
+    session_id: str,
+) -> dict[str, Any]:
+    """Generate a refresh token that carries the tenant and session scope."""
     settings = get_settings()
-    token = secrets.token_urlsafe(32)
-    token_id = str(uuid.uuid4())
+    token_secret = secrets.token_urlsafe(32)
+    token = ".".join((tenant_id, user_id, session_id, token_secret))
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=settings.jwt_refresh_token_ttl)
     return {
-        "id": token_id,
+        "id": session_id,
         "token": token,
         "token_hash": hash_token(token),
         "expires_at": expires_at,
@@ -315,6 +290,27 @@ def hash_token(token: str) -> str:
     if not normalized:
         raise TokenError("Refresh token is required")
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def parse_refresh_token(token: str) -> dict[str, str]:
+    """Extract tenant, user, and session scope from a refresh token."""
+    normalized = token.strip()
+    if not normalized:
+        raise TokenError("Refresh token is required")
+
+    parts = normalized.split(".", 3)
+    if len(parts) != 4:
+        raise TokenError("Refresh token is invalid")
+
+    tenant_id, user_id, session_id, secret = parts
+    if not tenant_id or not user_id or not session_id or not secret:
+        raise TokenError("Refresh token is invalid")
+
+    return {
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "session_id": session_id,
+    }
 
 
 def _apply_claim_hook(payload: dict[str, Any], hook: ClaimHook) -> dict[str, Any]:
@@ -355,14 +351,18 @@ def _validate_jwt_payload(payload: dict[str, Any]) -> None:
         Raises ``ValueError`` when required claims are missing, empty, or use
         invalid timestamp values.
     """
-    required_claims = {"sub", "email", "iat", "exp"}
+    required_claims = {"user_id", "tenant_id", "iat", "exp"}
     missing_claims = sorted(claim for claim in required_claims if claim not in payload)
     if missing_claims:
         raise ValueError(f"JWT payload is missing required claims: {', '.join(missing_claims)}")
 
-    if not str(payload["sub"]).strip():
+    if not str(payload["user_id"]).strip():
+        raise ValueError("JWT payload claim 'user_id' cannot be empty")
+    if not str(payload["tenant_id"]).strip():
+        raise ValueError("JWT payload claim 'tenant_id' cannot be empty")
+    if "sub" in payload and not str(payload["sub"]).strip():
         raise ValueError("JWT payload claim 'sub' cannot be empty")
-    if not str(payload["email"]).strip():
+    if "email" in payload and not str(payload["email"]).strip():
         raise ValueError("JWT payload claim 'email' cannot be empty")
 
     try:
