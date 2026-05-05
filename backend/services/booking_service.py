@@ -12,7 +12,9 @@ from psycopg2.extensions import connection as PGConnection
 
 from backend.repositories.booking_repository import (
     fetch_available_seats,
-    fetch_bookings_for_user,
+    fetch_past_bookings_for_user,
+    fetch_current_bookings_for_user,
+    fetch_future_bookings_for_user,
     fetch_seat_for_booking,
     has_active_booking_conflict,
     insert_booking,
@@ -170,14 +172,62 @@ def book_seat(
     return BookingResponse(**booking)
 
 
-def get_user_bookings(
+def get_user_past_bookings(
     conn: PGConnection,
     *,
     current_user: dict[str, Any],
 ) -> list[BookingResponse]:
     """List bookings visible to the authenticated user."""
     try:
-        bookings = fetch_bookings_for_user(
+        bookings = fetch_past_bookings_for_user(
+            conn,
+            tenant_id=str(current_user["tenant_id"]),
+            user_id=str(current_user["user_id"]),
+        )
+    except psycopg2.Error as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "booking_lookup_failed",
+                "message": "Failed to fetch bookings.",
+            },
+        ) from exc
+
+    return [BookingResponse(**booking) for booking in bookings]
+
+
+def get_user_current_bookings(
+    conn: PGConnection,
+    *,
+    current_user: dict[str, Any],
+) -> list[BookingResponse]:
+    """List bookings visible to the authenticated user."""
+    try:
+        bookings = fetch_current_bookings_for_user(
+            conn,
+            tenant_id=str(current_user["tenant_id"]),
+            user_id=str(current_user["user_id"]),
+        )
+    except psycopg2.Error as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "booking_lookup_failed",
+                "message": "Failed to fetch bookings.",
+            },
+        ) from exc
+
+    return [BookingResponse(**booking) for booking in bookings]
+
+
+def get_user_future_bookings(
+    conn: PGConnection,
+    *,
+    current_user: dict[str, Any],
+) -> list[BookingResponse]:
+    """List bookings visible to the authenticated user."""
+    try:
+        bookings = fetch_future_bookings_for_user(
             conn,
             tenant_id=str(current_user["tenant_id"]),
             user_id=str(current_user["user_id"]),
