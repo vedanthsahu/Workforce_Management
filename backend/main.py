@@ -30,6 +30,8 @@ from backend.repositories.token_repository import (
     purge_expired_refresh_tokens,
     purge_expired_sessions,
 )
+from backend.api.routes import teams
+
 
 settings = get_settings()
 
@@ -47,7 +49,7 @@ app.include_router(auth_router)
 app.include_router(sso_router)
 app.include_router(bookings_router)
 app.include_router(locations_router)
-
+app.include_router(teams.router)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
