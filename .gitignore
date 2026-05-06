@@ -120,3 +120,5 @@ site/
 # Optional: Docker overrides
 # =========================
 docker-compose.override.yml
+# Added by ggshield
+.cache_ggshield
