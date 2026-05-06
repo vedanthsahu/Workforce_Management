@@ -1,46 +1,57 @@
-"""Pydantic schemas for booking creation and availability lookups.
+"""Pydantic schemas for day-based booking flows."""
 
-This module defines the request and response models used by booking endpoints
-and by the service layer that formats booking and seat-availability data.
-"""
+from __future__ import annotations
 
-from datetime import datetime
-from uuid import UUID
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
 
 class CreateBookingRequest(BaseModel):
-    """Request body for creating a new booking."""
+    """Request body for creating one seat booking for one day."""
 
-    seat_id: UUID
-    start_time: datetime
-    end_time: datetime
+    site_id: int = Field(gt=0)
+    building_id: int = Field(gt=0)
+    floor_id: int = Field(gt=0)
+    seat_id: int = Field(gt=0)
+    booking_date: date
 
 
 class BookingResponse(BaseModel):
     """Public representation of a booking returned by the API."""
 
     booking_id: str
-    seat_id: str
+    tenant_id: str
     user_id: str
-    start_time: datetime
-    end_time: datetime
-    status: str
-    derived_status: str | None = None
+    seat_id: str
+    site_id: str | None = None
+    building_id: str | None = None
+    floor_id: str | None = None
+    seat_code: str | None = None
+    site_name: str | None = None
+    building_name: str | None = None
+    floor_name: str | None = None
+    booking_date: date
+    booking_status: str
+    source_channel: str | None = None
+    check_in_at: datetime | None = None
+    checked_out_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    cancellation_reason: str | None = None
     created_at: datetime | None = None
-
-
-class AvailableSeatsQuery(BaseModel):
-    """Query parameter model for seat-availability searches."""
-
-    floor_id: int = Field(gt=0)
-    start_time: datetime
-    end_time: datetime
+    updated_at: datetime | None = None
 
 
 class AvailableSeatResponse(BaseModel):
-    """Public representation of a seat that is free for a time window."""
+    """Public representation of an available seat."""
 
     seat_id: str
-    floor_id: int
+    tenant_id: str | None = None
+    site_id: str | None = None
+    building_id: str | None = None
+    floor_id: str
+    seat_code: str | None = None
+    seat_type: str | None = None
+    seat_neighborhood: str | None = None
+    is_bookable: bool | None = None
+    status: str | None = None

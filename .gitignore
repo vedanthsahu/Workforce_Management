@@ -1,3 +1,122 @@
+# =========================
+# Python bytecode/cache
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
 
-# Added by ggshield
-.cache_ggshield
+# Compiled extensions
+*.so
+*.pyd
+*.dll
+
+# =========================
+# Virtual environments
+# =========================
+venv/
+.venv/
+env/
+ENV/
+
+# =========================
+# Environment variables / secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# IDE / Editor files
+# =========================
+
+# VS Code
+.vscode/
+
+# PyCharm / IntelliJ
+.idea/
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+
+# =========================
+# OS generated files
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+
+# =========================
+# Testing / coverage
+# =========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# =========================
+# Type checkers / linters
+# =========================
+.mypy_cache/
+.pyre/
+.ruff_cache/
+.pytype/
+
+# =========================
+# Build / packaging
+# =========================
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# SQLite / local DB files
+# =========================
+*.sqlite3
+*.db
+
+# =========================
+# Temporary files
+# =========================
+tmp/
+temp/
+*.tmp
+
+# =========================
+# Uvicorn / FastAPI runtime
+# =========================
+*.pid
+
+# =========================
+# Cache directories
+# =========================
+.cache/
+
+# =========================
+# Optional: generated docs
+# =========================
+site/
+
+# =========================
+# Optional: Docker overrides
+# =========================
+docker-compose.override.yml

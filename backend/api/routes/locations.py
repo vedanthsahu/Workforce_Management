@@ -1,83 +1,67 @@
-"""HTTP routes for authenticated office and seat discovery.
+"""HTTP routes for authenticated location and seat discovery."""
 
-This module exposes read-only endpoints for offices, office floors, and floor
-seats. All routes require authenticated access.
-"""
+from __future__ import annotations
 
-from typing import Annotated
-from uuid import UUID
+from typing import Any, Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Path, Query
 from psycopg2.extensions import connection as PGConnection
 
-from backend.api.deps import get_auth_context
+from backend.api.deps import get_current_user
 from backend.db.connection import get_db
-from backend.schemas.location import FloorResponse, OfficeResponse, SeatResponse
-from backend.services.location_service import get_floors_by_office, get_offices, get_seats_by_floor
+from backend.schemas.location import BuildingResponse, FloorResponse, SeatResponse, SiteResponse
+from backend.services.location_service import (
+    get_buildings_by_site,
+    get_floors_by_site,
+    get_seats_by_floor,
+    get_sites,
+)
 
-router = APIRouter(tags=["locations"], dependencies=[Depends(get_auth_context)])
+router = APIRouter(tags=["locations"])
 
 
-@router.get("/offices", response_model=list[OfficeResponse])
-def offices(conn: Annotated[PGConnection, Depends(get_db)]) -> list[OfficeResponse]:
-    """Return the list of configured offices.
+@router.get("/sites", response_model=list[SiteResponse])
+def sites(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    conn: Annotated[PGConnection, Depends(get_db)],
+) -> list[SiteResponse]:
+    return get_sites(conn, tenant_id=str(current_user["tenant_id"]))
 
-    Args:
-        conn: Request-scoped PostgreSQL connection.
 
-    Returns:
-        list[OfficeResponse]: Office records available to the frontend.
-
-    Side Effects:
-        Delegates to the location service for database reads.
-
-    Failure Modes:
-        Propagates ``HTTPException`` instances raised by the service layer.
-    """
-    return get_offices(conn)
+@router.get("/buildings", response_model=list[BuildingResponse])
+def buildings(
+    site_id: Annotated[int, Query(gt=0)],
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    conn: Annotated[PGConnection, Depends(get_db)],
+) -> list[BuildingResponse]:
+    return get_buildings_by_site(
+        conn,
+        tenant_id=str(current_user["tenant_id"]),
+        site_id=str(site_id),
+    )
 
 
 @router.get("/offices/{office_id}/floors", response_model=list[FloorResponse])
 def floors_by_office(
-    office_id: UUID,
+    site_id: Annotated[int, Path(alias="office_id", gt=0)],
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
     conn: Annotated[PGConnection, Depends(get_db)],
 ) -> list[FloorResponse]:
-    """Return floors belonging to one office.
-
-    Args:
-        office_id: Office identifier from the request path.
-        conn: Request-scoped PostgreSQL connection.
-
-    Returns:
-        list[FloorResponse]: Floors configured under the requested office.
-
-    Side Effects:
-        Delegates to the location service for database reads.
-
-    Failure Modes:
-        Propagates ``HTTPException`` instances raised by the service layer.
-    """
-    return get_floors_by_office(conn, office_id=str(office_id))
+    return get_floors_by_site(
+        conn,
+        tenant_id=str(current_user["tenant_id"]),
+        site_id=str(site_id),
+    )
 
 
 @router.get("/floors/{floor_id}/seats", response_model=list[SeatResponse])
 def seats_by_floor(
-    floor_id: UUID,
+    floor_id: Annotated[int, Path(gt=0)],
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
     conn: Annotated[PGConnection, Depends(get_db)],
 ) -> list[SeatResponse]:
-    """Return seats configured for a floor.
-
-    Args:
-        floor_id: Floor identifier from the request path.
-        conn: Request-scoped PostgreSQL connection.
-
-    Returns:
-        list[SeatResponse]: Seats configured for the requested floor.
-
-    Side Effects:
-        Delegates to the location service for database reads.
-
-    Failure Modes:
-        Propagates ``HTTPException`` instances raised by the service layer.
-    """
-    return get_seats_by_floor(conn, floor_id=str(floor_id))
+    return get_seats_by_floor(
+        conn,
+        tenant_id=str(current_user["tenant_id"]),
+        floor_id=str(floor_id),
+    )

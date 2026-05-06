@@ -8,8 +8,8 @@ authentication and SSO flows.
 
 Key dependencies include FastAPI for request handling, the shared settings
 loader for environment-backed configuration, the database connection factory,
-and repository helpers that keep authentication-related tables and user profile
-columns in sync with the expectations of the API layer.
+and repository helpers that keep authentication-related tables in sync with the
+expectations of the API layer.
 """
 
 from typing import Any
@@ -30,13 +30,14 @@ from backend.repositories.token_repository import (
     purge_expired_refresh_tokens,
     purge_expired_sessions,
 )
-from backend.repositories.user_repository import ensure_user_profile_columns
+from backend.api.routes import teams
+
 
 settings = get_settings()
 
 # The application exposes a single frontend origin and composes feature routers
 # from the authentication, SSO, booking, and location modules.
-app = FastAPI(title="Seat Booking Auth API")
+app = FastAPI(title="Seat Management Backend")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],
@@ -48,7 +49,7 @@ app.include_router(auth_router)
 app.include_router(sso_router)
 app.include_router(bookings_router)
 app.include_router(locations_router)
-
+app.include_router(teams.router)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
@@ -84,10 +85,8 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
 def startup() -> None:
     """Prepare database state required before the API starts serving traffic.
 
-    The startup hook ensures legacy user rows have the profile fields expected
-    by SSO-aware code paths, creates refresh-token and SSO session tables when
-    missing, and removes expired authentication artifacts left from previous
-    runs.
+    The startup hook ensures authentication session tables exist and removes
+    expired authentication artifacts left from previous runs.
 
     Returns:
         None.
@@ -101,9 +100,6 @@ def startup() -> None:
         such failure prevents the FastAPI application from finishing startup.
     """
     with get_db_connection() as conn:
-        # Keep the auth schema aligned with the expectations of newer code
-        # before any request handlers begin querying these tables.
-        ensure_user_profile_columns(conn)
         ensure_refresh_tokens_table(conn)
         ensure_sessions_table(conn)
         # Startup opportunistically clears expired auth state so later request
@@ -130,23 +126,23 @@ def index() -> dict[str, object]:
         static in-memory structure.
     """
     return {
-        "service": "seat-booking-auth",
+        "service": "seat-management-backend",
         "docs": "/docs",
         "endpoints": [
-            "POST /auth/signup",
-            "POST /auth/login",
-            "POST /auth/refresh",
-            "GET /auth/me",
-            "POST /auth/logout",
             "GET /auth/login",
             "GET /auth/callback",
+            "POST /auth/refresh",
+            "GET /auth/me",
             "GET /graph/me",
             "GET /graph/groups",
             "GET /graph/manager",
             "POST /bookings",
-            "GET /bookings",
+            "GET /bookings/me/past",
+            "GET /bookings/me/current",
+            "GET /bookings/me/future",
             "GET /bookings/available",
-            "GET /offices",
+            "GET /sites",
+            "GET /buildings?site_id={site_id}",
             "GET /offices/{office_id}/floors",
             "GET /floors/{floor_id}/seats",
             "GET /health",

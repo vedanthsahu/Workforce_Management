@@ -271,7 +271,7 @@ def get_settings() -> Settings:
         jwt_refresh_token_ttl=_parse_int_env("JWT_REFRESH_TOKEN_TTL", str(30 * 24 * 60 * 60)),
         jwt_allowed_claims=_parse_list_env(
             "JWT_ALLOWED_CLAIMS",
-            ("sub", "email", "role", "tenant", "iat", "exp"),
+            ("user_id", "sub", "email", "role", "tenant_id", "session_id", "iat", "exp"),
         ),
         auth_cookie_secure=_parse_bool_env("AUTH_COOKIE_SECURE", cookie_secure_default),
         auth_cookie_samesite=_parse_samesite_env("AUTH_COOKIE_SAMESITE", "lax"),

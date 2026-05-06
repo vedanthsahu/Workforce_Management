@@ -1,404 +1,536 @@
-"""Repository helpers for user storage and SSO account linking.
+"""Repository helpers for schema-native tenant, user, and Graph identity access."""
 
-This module manages user profile schema compatibility, user lookup queries,
-standard user creation, and the upsert flow used to reconcile Microsoft SSO
-identities with existing local accounts.
-"""
+from __future__ import annotations
 
 from typing import Any
-from datetime import datetime
-import secrets
-import uuid
 
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import Json, RealDictCursor
 from psycopg2.extensions import connection as PGConnection
 
-from backend.core.security import hash_password
-
-# Shared field list keeps all user queries aligned on the same public shape.
 USER_SELECT_FIELDS = """
-    user_id::text AS user_id,
-    name,
-    email,
-    azure_oid,
-    display_name,
-    last_login,
-    location,
-    project,
-    role,
-    created_at
+    au.id::text AS user_id,
+    au.tenant_id::text AS tenant_id,
+    au.external_user_id,
+    au.email,
+    au.full_name,
+    au.display_name,
+    au.mobile_phone,
+    au.office_location,
+    au.department,
+    au.job_title,
+    au.company_name,
+    au.employee_id,
+    au.microsoft_object_id,
+    au.user_principal_name,
+    au.manager_user_id::text AS manager_user_id,
+    au.role_name AS role,
+    au.status,
+    au.home_site_id::text AS home_site_id,
+    au.graph_last_synced_at,
+    au.created_at,
+    au.updated_at
 """
 
+USER_SELECT_FROM = """
+    FROM app_users AS au
+"""
 
-def ensure_user_profile_columns(conn: PGConnection) -> None:
-    """Ensure user-profile columns required by current code paths exist.
+USER_RETURNING_FIELDS = """
+    id::text AS user_id,
+    tenant_id::text AS tenant_id,
+    external_user_id,
+    email,
+    full_name,
+    display_name,
+    mobile_phone,
+    office_location,
+    department,
+    job_title,
+    company_name,
+    employee_id,
+    microsoft_object_id,
+    user_principal_name,
+    manager_user_id::text AS manager_user_id,
+    role_name AS role,
+    status,
+    home_site_id::text AS home_site_id,
+    graph_last_synced_at,
+    created_at,
+    updated_at
+"""
 
-    Args:
-        conn: Open PostgreSQL connection.
-
-    Returns:
-        None.
-
-    Side Effects:
-        Executes DDL statements that add profile and SSO-related columns or
-        indexes. The caller is responsible for committing the transaction.
-
-    Failure Modes:
-        Propagates database execution errors raised by psycopg2.
-    """
-    with conn.cursor() as cur:
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS location TEXT")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS project TEXT")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT")
-        # SSO: Add Microsoft identity and profile fields.
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS azure_oid VARCHAR")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP")
-        # SSO: Enforce unique non-null Azure OID values.
-        cur.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_azure_oid_unique
-            ON users (azure_oid)
-            WHERE azure_oid IS NOT NULL
-            """
-        )
-
-
-def fetch_user_by_email(conn: PGConnection, email: str) -> dict[str, Any] | None:
-    """Fetch one user record by email address.
-
-    Args:
-        conn: Open PostgreSQL connection.
-        email: Normalized email address to match.
-
-    Returns:
-        dict[str, Any] | None: User row including ``password_hash`` when found,
-        otherwise ``None``.
-
-    Side Effects:
-        Executes a ``SELECT`` query against ``users``.
-
-    Failure Modes:
-        Propagates database execution errors raised by psycopg2.
-    """
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
-            f"""
-            SELECT {USER_SELECT_FIELDS}, password_hash
-            FROM users
-            WHERE email = %s
-            """,
-            (email,),
-        )
-        result = cur.fetchone()
-    return dict(result) if result else None
-
-
-def fetch_user_by_id(conn: PGConnection, user_id: str) -> dict[str, Any] | None:
-    """Fetch one user record by primary key.
-
-    Args:
-        conn: Open PostgreSQL connection.
-        user_id: User identifier to match.
-
-    Returns:
-        dict[str, Any] | None: User row without password material, or ``None``
-        if the user does not exist.
-
-    Side Effects:
-        Executes a ``SELECT`` query against ``users``.
-
-    Failure Modes:
-        Propagates database execution errors raised by psycopg2.
-    """
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
-            f"""
-            SELECT {USER_SELECT_FIELDS}
-            FROM users
-            WHERE user_id = %s
-            """,
-            (user_id,),
-        )
-        result = cur.fetchone()
-    return dict(result) if result else None
-
-
-def fetch_user_by_azure_oid(conn: PGConnection, azure_oid: str) -> dict[str, Any] | None:
-    """Fetch one user record by Microsoft Entra object identifier.
-
-    Args:
-        conn: Open PostgreSQL connection.
-        azure_oid: Stable Microsoft object identifier to match.
-
-    Returns:
-        dict[str, Any] | None: Matching user row, or ``None`` when no account is
-        linked to the supplied identity.
-
-    Side Effects:
-        Executes a ``SELECT`` query against ``users``.
-
-    Failure Modes:
-        Propagates database execution errors raised by psycopg2.
-    """
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
-            f"""
-            SELECT {USER_SELECT_FIELDS}
-            FROM users
-            WHERE azure_oid = %s
-            """,
-            (azure_oid,),
-        )
-        result = cur.fetchone()
-    return dict(result) if result else None
+ROLE_NAMES = {"EMPLOYEE", "OFFICE_ADMIN", "TENANT_ADMIN", "SUPPORT_ADMIN"}
+USER_STATUSES = {"ACTIVE", "INACTIVE", "LOCKED"}
 
 
 def _normalize_email(value: str) -> str:
-    """Normalize a user email address for consistent storage and lookup.
-
-    Args:
-        value: Raw email string supplied by a caller.
-
-    Returns:
-        str: Trimmed lowercase email string.
-
-    Side Effects:
-        None.
-
-    Failure Modes:
-        None. Structural validation is handled by the calling layer.
-    """
     return value.strip().lower()
 
 
-def _normalize_display_name(value: str | None) -> str | None:
-    """Normalize an optional display name for user-profile persistence.
-
-    Args:
-        value: Optional display name supplied by Microsoft identity data.
-
-    Returns:
-        str | None: Trimmed display name, or ``None`` when the input is missing
-        or blank.
-
-    Side Effects:
-        None.
-
-    Failure Modes:
-        None expected under normal runtime conditions.
-    """
+def _normalize_text(value: str | None, *, max_length: int | None = None) -> str | None:
     if value is None:
         return None
     normalized = value.strip()
-    return normalized if normalized else None
+    if not normalized:
+        return None
+    if max_length is not None and len(normalized) > max_length:
+        raise ValueError(f"Value exceeds schema limit of {max_length} characters.")
+    return normalized
 
 
-def _legacy_placeholder_password_hash() -> str:
-    """Generate a placeholder password hash for SSO-provisioned users.
-
-    Returns:
-        str: Bcrypt hash of a random secret never shown to the user.
-
-    Side Effects:
-        Performs secure random generation and bcrypt hashing.
-
-    Failure Modes:
-        Propagates hashing errors from the shared security helper.
-    """
-    # SSO: Keep legacy login schema compatible for newly provisioned SSO users.
-    return hash_password(secrets.token_urlsafe(32))
+def _required_text(value: str | None, *, field_name: str, max_length: int) -> str:
+    normalized = _normalize_text(value, max_length=max_length)
+    if normalized is None:
+        raise ValueError(f"{field_name} is required.")
+    return normalized
 
 
-def upsert_user_from_sso(
+def fetch_default_tenant_id(conn: PGConnection) -> str:
+    """Resolve one active tenant when request-level tenant scoping is absent."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id::text
+            FROM tenants
+            WHERE status = 'ACTIVE'
+            ORDER BY id
+            LIMIT 2
+            """
+        )
+        rows = cur.fetchall()
+
+    if len(rows) == 1:
+        return str(rows[0][0])
+    if not rows:
+        raise LookupError("No active tenant is configured for authentication.")
+    raise LookupError("Multiple active tenants exist; tenant resolution is ambiguous.")
+
+
+def fetch_tenant_by_azure_tenant_id(conn: PGConnection, azure_tenant_id: str) -> dict[str, Any] | None:
+    """Fetch the active application tenant whose tenant_key maps to Azure tid."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+                id::text AS tenant_id,
+                tenant_key,
+                tenant_name,
+                status,
+                created_at,
+                updated_at
+            FROM tenants
+            WHERE tenant_key = %s
+              AND status = 'ACTIVE'
+            """,
+            (azure_tenant_id,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def fetch_active_tenant_for_login(conn: PGConnection, *, azure_tenant_id: str) -> dict[str, Any] | None:
+    """Resolve the tenant for SSO using tenant_key, falling back only if unambiguous."""
+    tenant = fetch_tenant_by_azure_tenant_id(conn, azure_tenant_id)
+    if tenant is not None:
+        return tenant
+
+    tenant_id = fetch_default_tenant_id(conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+                id::text AS tenant_id,
+                tenant_key,
+                tenant_name,
+                status,
+                created_at,
+                updated_at
+            FROM tenants
+            WHERE id = %s
+              AND status = 'ACTIVE'
+            """,
+            (tenant_id,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def fetch_user_by_email(
+    conn: PGConnection,
+    email: str,
+    *,
+    tenant_id: str,
+) -> dict[str, Any] | None:
+    """Fetch one user record by email address within a tenant."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            SELECT {USER_SELECT_FIELDS}
+            {USER_SELECT_FROM}
+            WHERE au.tenant_id = %s
+              AND au.email = %s
+            """,
+            (tenant_id, _normalize_email(email)),
+        )
+        result = cur.fetchone()
+    return dict(result) if result else None
+
+
+def fetch_user_by_id(
     conn: PGConnection,
     *,
-    azure_oid: str,
-    email: str,
-    display_name: str | None,
-) -> dict[str, Any]:
-    """Create or update a local user record from Microsoft SSO identity data.
-
-    The lookup order favors the stable Azure object identifier and falls back to
-    email-based linking for existing local accounts. New SSO-only users receive
-    safe placeholder values for legacy required columns.
-
-    Args:
-        conn: Open PostgreSQL connection.
-        azure_oid: Stable Microsoft object identifier for the account.
-        email: Email address resolved from Microsoft claims or Graph.
-        display_name: Optional display name resolved from Microsoft identity
-            data.
-
-    Returns:
-        dict[str, Any]: Inserted or updated user row.
-
-    Side Effects:
-        Executes one or more ``SELECT``, ``UPDATE``, or ``INSERT`` statements
-        against ``users``. Commit control remains with the caller.
-
-    Failure Modes:
-        Propagates database execution and constraint errors raised by psycopg2.
-    """
-    normalized_email = _normalize_email(email)
-    normalized_display_name = _normalize_display_name(display_name)
-    now = datetime.utcnow()
-
+    tenant_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    """Fetch one tenant-scoped user record by app_users.id."""
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        # SSO: Update existing account matched by stable Azure OID.
         cur.execute(
             f"""
             SELECT {USER_SELECT_FIELDS}
-            FROM users
-            WHERE azure_oid = %s
+            {USER_SELECT_FROM}
+            WHERE au.tenant_id = %s
+              AND au.id = %s
             """,
-            (azure_oid,),
+            (tenant_id, user_id),
         )
-        existing_by_oid = cur.fetchone()
-        if existing_by_oid is not None:
-            cur.execute(
-                f"""
-                UPDATE users
-                SET
-                    email = %s,
-                    display_name = %s,
-                    last_login = %s,
-                    name = CASE WHEN %s IS NOT NULL THEN %s ELSE name END
-                WHERE user_id = %s
-                RETURNING {USER_SELECT_FIELDS}
-                """,
-                (
-                    normalized_email,
-                    normalized_display_name,
-                    now,
-                    normalized_display_name,
-                    normalized_display_name,
-                    existing_by_oid["user_id"],
-                ),
-            )
-            return dict(cur.fetchone())
+        result = cur.fetchone()
+    return dict(result) if result else None
 
-        # SSO: Link existing local account by email, then stamp Azure OID.
+
+def fetch_user_by_microsoft_object_id(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    microsoft_object_id: str,
+) -> dict[str, Any] | None:
+    """Fetch one user by the schema's Microsoft object id unique key."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             f"""
             SELECT {USER_SELECT_FIELDS}
-            FROM users
-            WHERE email = %s
+            {USER_SELECT_FROM}
+            WHERE au.tenant_id = %s
+              AND au.microsoft_object_id = %s
             """,
-            (normalized_email,),
+            (tenant_id, _required_text(microsoft_object_id, field_name="microsoft_object_id", max_length=150)),
         )
-        existing_by_email = cur.fetchone()
-        if existing_by_email is not None:
-            cur.execute(
-                f"""
-                UPDATE users
-                SET
-                    azure_oid = %s,
-                    email = %s,
-                    display_name = %s,
-                    last_login = %s,
-                    name = CASE WHEN %s IS NOT NULL THEN %s ELSE name END
-                WHERE user_id = %s
-                RETURNING {USER_SELECT_FIELDS}
-                """,
-                (
-                    azure_oid,
-                    normalized_email,
-                    normalized_display_name,
-                    now,
-                    normalized_display_name,
-                    normalized_display_name,
-                    existing_by_email["user_id"],
-                ),
-            )
-            return dict(cur.fetchone())
+        result = cur.fetchone()
+    return dict(result) if result else None
 
-        # SSO: Provision new user with safe defaults for legacy required columns.
-        generated_user_id = str(uuid.uuid4())
-        fallback_name = normalized_email.split("@", 1)[0] or normalized_email
-        resolved_name = normalized_display_name or fallback_name
+
+def fetch_user_by_sso_identity(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    provider: str,
+    provider_user_id: str,
+) -> dict[str, Any] | None:
+    """Fetch one user through auth_identities within the resolved tenant."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             f"""
-            INSERT INTO users (
-                user_id,
-                name,
-                email,
-                password_hash,
-                location,
-                project,
-                role,
-                azure_oid,
-                display_name,
-                last_login
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING {USER_SELECT_FIELDS}
+            SELECT {USER_SELECT_FIELDS}
+            FROM auth_identities AS ai
+            INNER JOIN app_users AS au
+                ON au.tenant_id = ai.tenant_id
+               AND au.id = ai.user_id
+            WHERE ai.tenant_id = %s
+              AND ai.provider = %s
+              AND ai.provider_user_id = %s
             """,
             (
-                generated_user_id,
-                resolved_name,
-                normalized_email,
-                _legacy_placeholder_password_hash(),
-                "N/A",
-                0,
-                "user",
-                azure_oid,
-                normalized_display_name,
-                now,
+                tenant_id,
+                _required_text(provider, field_name="provider", max_length=50),
+                _required_text(provider_user_id, field_name="provider_user_id", max_length=150),
             ),
         )
-        return dict(cur.fetchone())
+        result = cur.fetchone()
+    return dict(result) if result else None
 
 
-def create_user(
+def create_app_user_from_graph(
     conn: PGConnection,
     *,
-    user_id: str,
-    name: str,
+    tenant_id: str,
+    microsoft_object_id: str,
     email: str,
-    password_hash: str,
-    location: str,
-    project: int,
-    role: str,
+    full_name: str,
+    user_principal_name: str | None,
+    display_name: str | None,
+    mobile_phone: str | None,
+    office_location: str | None,
+    job_title: str | None,
+    department: str | None,
+    company_name: str | None,
+    employee_id: str | None,
+    manager_user_id: str | None,
 ) -> dict[str, Any]:
-    """Insert a local user account and return the created row.
+    """Create a first-time SSO user in app_users using schema-valid fields."""
+    normalized_email = _required_text(_normalize_email(email), field_name="email", max_length=200)
+    normalized_role = "EMPLOYEE"
+    normalized_status = "ACTIVE"
 
-    Args:
-        conn: Open PostgreSQL connection.
-        user_id: Application-generated user identifier.
-        name: Display name for the user.
-        email: Normalized email address.
-        password_hash: Previously hashed password for local login.
-        location: User location metadata.
-        project: Numeric project identifier stored on the user profile.
-        role: Role label stored on the user profile.
+    if normalized_role not in ROLE_NAMES:
+        raise ValueError("Default role_name is not allowed by chk_app_users_role.")
+    if normalized_status not in USER_STATUSES:
+        raise ValueError("Default status is not allowed by chk_app_users_status.")
 
-    Returns:
-        dict[str, Any]: Inserted user row without password material.
-
-    Side Effects:
-        Executes an ``INSERT`` into ``users``. Commit control remains with the
-        caller.
-
-    Failure Modes:
-        Propagates database execution and constraint errors raised by psycopg2.
-    """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             f"""
-            INSERT INTO users (
-                user_id,
-                name,
+            INSERT INTO app_users (
+                tenant_id,
                 email,
-                password_hash,
-                location,
-                project,
-                role
+                full_name,
+                role_name,
+                status,
+                microsoft_object_id,
+                user_principal_name,
+                display_name,
+                mobile_phone,
+                office_location,
+                job_title,
+                department,
+                company_name,
+                employee_id,
+                manager_user_id,
+                graph_last_synced_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (tenant_id, microsoft_object_id) DO NOTHING
+            RETURNING {USER_RETURNING_FIELDS}
+            """,
+            (
+                tenant_id,
+                normalized_email,
+                _required_text(full_name, field_name="full_name", max_length=200),
+                normalized_role,
+                normalized_status,
+                _required_text(microsoft_object_id, field_name="microsoft_object_id", max_length=150),
+                _normalize_text(user_principal_name, max_length=200),
+                _normalize_text(display_name, max_length=200),
+                _normalize_text(mobile_phone, max_length=50),
+                _normalize_text(office_location, max_length=200),
+                _normalize_text(job_title, max_length=150),
+                _normalize_text(department, max_length=150),
+                _normalize_text(company_name, max_length=200),
+                _normalize_text(employee_id, max_length=100),
+                manager_user_id,
+            ),
+        )
+        result = cur.fetchone()
+
+    if result:
+        return dict(result)
+
+    existing = fetch_user_by_microsoft_object_id(
+        conn,
+        tenant_id=tenant_id,
+        microsoft_object_id=microsoft_object_id,
+    )
+    if existing is None:
+        raise LookupError("Unable to create or resolve the Microsoft SSO user.")
+    return existing
+
+
+def create_auth_identity_for_user(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    user_id: str,
+    provider: str,
+    provider_tenant_id: str | None,
+    provider_user_id: str,
+    email: str,
+    raw_profile: dict[str, Any],
+) -> None:
+    """Insert the provider identity row for a first-time SSO user."""
+    normalized_provider = _required_text(provider, field_name="provider", max_length=50)
+    normalized_provider_user_id = _required_text(provider_user_id, field_name="provider_user_id", max_length=150)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO auth_identities (
+                tenant_id,
+                user_id,
+                provider,
+                provider_tenant_id,
+                provider_user_id,
+                email,
+                raw_profile
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING {USER_SELECT_FIELDS}
+            ON CONFLICT (provider, provider_user_id) DO NOTHING
             """,
-            (user_id, name, email, password_hash, location, project, role),
+            (
+                tenant_id,
+                user_id,
+                normalized_provider,
+                _normalize_text(provider_tenant_id, max_length=100),
+                normalized_provider_user_id,
+                _required_text(_normalize_email(email), field_name="email", max_length=200),
+                Json(raw_profile),
+            ),
         )
-        inserted = cur.fetchone()
-    return dict(inserted)
+        if cur.rowcount:
+            return
+
+        cur.execute(
+            """
+            SELECT tenant_id::text, user_id::text
+            FROM auth_identities
+            WHERE provider = %s
+              AND provider_user_id = %s
+            """,
+            (normalized_provider, normalized_provider_user_id),
+        )
+        row = cur.fetchone()
+    if row is None or str(row[0]) != str(tenant_id) or str(row[1]) != str(user_id):
+        raise LookupError("Microsoft provider identity is already linked to a different user.")
+
+
+def upsert_user_graph_profile(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    user_id: str,
+    graph_profile: dict[str, Any],
+    manager_graph_object_id: str | None,
+) -> None:
+    """Store the enriched Microsoft Graph profile for a first-time SSO user."""
+    graph_object_id = _required_text(str(graph_profile.get("id") or ""), field_name="graph_object_id", max_length=150)
+    business_phones = graph_profile.get("businessPhones")
+    if business_phones is not None and not isinstance(business_phones, list):
+        raise ValueError("businessPhones must be a JSON array when present.")
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO user_graph_profiles (
+                tenant_id,
+                user_id,
+                graph_object_id,
+                user_principal_name,
+                display_name,
+                given_name,
+                surname,
+                mail,
+                mobile_phone,
+                business_phones,
+                job_title,
+                department,
+                company_name,
+                employee_id,
+                office_location,
+                city,
+                state,
+                country,
+                manager_graph_object_id,
+                raw_profile,
+                synced_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (tenant_id, user_id) DO UPDATE
+            SET graph_object_id = EXCLUDED.graph_object_id,
+                user_principal_name = EXCLUDED.user_principal_name,
+                display_name = EXCLUDED.display_name,
+                given_name = EXCLUDED.given_name,
+                surname = EXCLUDED.surname,
+                mail = EXCLUDED.mail,
+                mobile_phone = EXCLUDED.mobile_phone,
+                business_phones = EXCLUDED.business_phones,
+                job_title = EXCLUDED.job_title,
+                department = EXCLUDED.department,
+                company_name = EXCLUDED.company_name,
+                employee_id = EXCLUDED.employee_id,
+                office_location = EXCLUDED.office_location,
+                city = EXCLUDED.city,
+                state = EXCLUDED.state,
+                country = EXCLUDED.country,
+                manager_graph_object_id = EXCLUDED.manager_graph_object_id,
+                raw_profile = EXCLUDED.raw_profile,
+                synced_at = NOW(),
+                updated_at = NOW()
+            """,
+            (
+                tenant_id,
+                user_id,
+                graph_object_id,
+                _normalize_text(graph_profile.get("userPrincipalName"), max_length=200),
+                _normalize_text(graph_profile.get("displayName"), max_length=200),
+                _normalize_text(graph_profile.get("givenName"), max_length=100),
+                _normalize_text(graph_profile.get("surname"), max_length=100),
+                _normalize_text(graph_profile.get("mail"), max_length=200),
+                _normalize_text(graph_profile.get("mobilePhone"), max_length=50),
+                Json(business_phones) if business_phones is not None else None,
+                _normalize_text(graph_profile.get("jobTitle"), max_length=150),
+                _normalize_text(graph_profile.get("department"), max_length=150),
+                _normalize_text(graph_profile.get("companyName"), max_length=200),
+                _normalize_text(graph_profile.get("employeeId"), max_length=100),
+                _normalize_text(graph_profile.get("officeLocation"), max_length=200),
+                _normalize_text(graph_profile.get("city"), max_length=100),
+                _normalize_text(graph_profile.get("state"), max_length=100),
+                _normalize_text(graph_profile.get("country"), max_length=100),
+                _normalize_text(manager_graph_object_id, max_length=150),
+                Json(graph_profile),
+            ),
+        )
+
+
+def sync_graph_groups_for_user(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    user_id: str,
+    graph_groups: dict[str, Any],
+) -> None:
+    """Map Microsoft Graph groups to teams and team_members idempotently."""
+    groups = graph_groups.get("value", [])
+    if not isinstance(groups, list):
+        raise ValueError("Graph groups payload must contain a list in 'value'.")
+
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        odata_type = str(group.get("@odata.type") or "").strip()
+        if odata_type and odata_type != "#microsoft.graph.group":
+            continue
+
+        team_key = _required_text(str(group.get("id") or ""), field_name="team_key", max_length=100)
+        team_name = _normalize_text(group.get("displayName"), max_length=200) or team_key
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO teams (
+                    tenant_id,
+                    team_key,
+                    team_name,
+                    source
+                )
+                VALUES (%s, %s, %s, 'GRAPH')
+                ON CONFLICT (tenant_id, team_key) DO UPDATE
+                SET team_name = EXCLUDED.team_name,
+                    source = EXCLUDED.source,
+                    updated_at = NOW()
+                RETURNING id::text AS team_id
+                """,
+                (tenant_id, team_key, team_name),
+            )
+            team = cur.fetchone()
+            if team is None:
+                raise LookupError(f"Graph team '{team_key}' could not be resolved.")
+
+            cur.execute(
+                """
+                INSERT INTO team_members (
+                    tenant_id,
+                    team_id,
+                    user_id,
+                    member_role
+                )
+                VALUES (%s, %s, %s, 'MEMBER')
+                ON CONFLICT (tenant_id, team_id, user_id) DO NOTHING
+                """,
+                (tenant_id, team["team_id"], user_id),
+            )
