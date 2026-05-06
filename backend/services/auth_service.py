@@ -255,3 +255,48 @@ def refresh_auth_tokens(
                 "message": "Failed to refresh authentication tokens.",
             },
         ) from exc
+def logout_user_session(
+    conn: PGConnection,
+    refresh_token: str,
+    *,
+    commit: bool = True,
+) -> None:
+    try:
+        refresh_scope = parse_refresh_token(refresh_token)
+        token_hash = hash_token(refresh_token)
+
+        revoked = revoke_user_session(
+            conn,
+            tenant_id=refresh_scope["tenant_id"],
+            user_id=refresh_scope["user_id"],
+            session_id=refresh_scope["session_id"],
+            refresh_token_hash=token_hash,
+        )
+
+        if revoked:
+            record_auth_event(
+                conn,
+                tenant_id=refresh_scope["tenant_id"],
+                user_id=refresh_scope["user_id"],
+                session_id=refresh_scope["session_id"],
+                event_type="LOGOUT",
+            )
+
+        if commit:
+            conn.commit()
+
+    except TokenError:
+        if commit:
+            _rollback_if_needed(conn)
+
+    except psycopg2.Error as exc:
+        if commit:
+            _rollback_if_needed(conn)
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "logout_failed",
+                "message": "Failed to logout user session.",
+            },
+        ) from exc

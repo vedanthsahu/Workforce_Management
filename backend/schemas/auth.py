@@ -11,7 +11,10 @@ class MessageResponse(BaseModel):
     """Simple message-only response."""
 
     message: str
-
+class FavoriteSeatResponse(BaseModel):
+    seat_id: str
+    seat_code: str
+    booking_count: int
 
 class UserResponse(BaseModel):
     """Public representation of a tenant-scoped authenticated user."""
@@ -38,6 +41,8 @@ class UserResponse(BaseModel):
     graph_last_synced_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    favorite_seat: FavoriteSeatResponse | None = None
+    days_in_office: int = 0
 
     @model_validator(mode="before")
     @classmethod

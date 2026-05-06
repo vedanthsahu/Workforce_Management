@@ -534,3 +534,55 @@ def sync_graph_groups_for_user(
                 """,
                 (tenant_id, team["team_id"], user_id),
             )
+def fetch_favorite_seat(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+                s.id::text AS seat_id,
+                s.seat_code,
+                COUNT(*) AS booking_count
+            FROM bookings b
+            JOIN seats s
+                ON s.id = b.seat_id
+                AND s.tenant_id = b.tenant_id
+            WHERE b.tenant_id = %s
+              AND b.user_id = %s
+              AND b.booking_status = 'CONFIRMED'
+            GROUP BY s.id, s.seat_code
+            ORDER BY booking_count DESC, s.id
+            LIMIT 1
+            """,
+            (tenant_id, user_id),
+        )
+
+        row = cur.fetchone()
+
+    return dict(row) if row else None
+def fetch_days_in_office(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    user_id: str,
+) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT booking_date)
+            FROM bookings
+            WHERE tenant_id = %s
+              AND user_id = %s
+              AND booking_status = 'CONFIRMED'
+              AND booking_date <= CURRENT_DATE
+            """,
+            (tenant_id, user_id),
+        )
+
+        row = cur.fetchone()
+
+    return int(row[0] or 0)

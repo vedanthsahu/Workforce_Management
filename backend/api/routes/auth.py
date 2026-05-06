@@ -6,7 +6,7 @@ from typing import Any, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from psycopg2.extensions import connection as PGConnection
-
+from backend.services.auth_service import logout_user_session
 from backend.api.deps import get_current_user
 from backend.core.config import get_settings
 from backend.core.security import (
@@ -21,7 +21,20 @@ from backend.services.auth_service import AuthTokens, refresh_auth_tokens
 
 router = APIRouter(tags=["auth"])
 
+@router.post("/auth/logout", response_model=MessageResponse)
+def logout(
+    request: Request,
+    response: Response,
+    conn: Annotated[PGConnection, Depends(get_db)],
+) -> MessageResponse:
+    refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE_NAME)
 
+    if refresh_token:
+        logout_user_session(conn, refresh_token)
+
+    _clear_auth_cookies(response)
+
+    return MessageResponse(message="Logged out successfully")
 @router.post("/auth/refresh", response_model=MessageResponse)
 def refresh_token(
     request: Request,
