@@ -70,7 +70,10 @@ export interface TeamMember {
   name: string;
   initials: string;
   floor: string;
-  avatarColor?: string;
+  avatarColor: string;
+  seatCode?: string;
+  email?: string;
+  buildingId?: string;
 }
 
 export interface Announcement {
@@ -104,8 +107,9 @@ export interface DashboardStats {
   teamInOffice: number;
   teamRemoteCount: number;
   // removed: nextSeat, nextSeatFloor
-  officeOccupancy: number;       // ← new (0–100 percentage)
-  occupancyLabel: string;        // ← new e.g. "Moderate traffic today"
+ officeVisitsThisYear: number;
+  teamRank: number;
+
 }
 
 export interface WeekDay {
@@ -153,3 +157,4 @@ export interface DashboardData {
   todayBooking: TodayBookingInfo;
   daysInOffice: number;                  // ← new, from /auth/me
 }
+

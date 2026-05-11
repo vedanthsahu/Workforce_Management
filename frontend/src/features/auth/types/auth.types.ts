@@ -35,3 +35,10 @@ export function getInitials(name: string): string {
     .slice(0, 2)
     .toUpperCase();
 }
+
+export interface AuthContextType {
+  user: User | null;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+  logout: () => Promise<void>;
+}

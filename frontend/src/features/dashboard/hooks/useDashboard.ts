@@ -1,76 +1,84 @@
-"use client";
+ "use client";
 
-import { useState, useEffect } from "react";
-import { getDashboardData, cancelBooking } from "../services/dashboard.service";
+import { useCallback, useEffect, useState } from "react";
+
 import type { DashboardData } from "../types/dashboard.types";
+import { cancelBooking, DashboardSectionError, getDashboardData } from "../services/dashboard.service";
+
+const MAX_VISIBLE_BOOKINGS = 2;
+
+type HookState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "fatal"; error: DashboardSectionError }
+  | { status: "ready"; data: DashboardData; sectionErrors: DashboardSectionError[] };
 
 export function useDashboard() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showAllBookings, setShowAllBookings] = useState(false);
+  const [state, setState] = useState<HookState>({ status: "idle" });
 
-  async function fetchData() {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const dashboardData = await getDashboardData();
-      setData(dashboardData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load dashboard");
-    } finally {
-      setIsLoading(false);
+  const load = useCallback(async () => {
+    setState({ status: "loading" });
+    const result = await getDashboardData();
+
+    if (!result.ok) {
+      setState({ status: "fatal", error: result.fatal });
+      return;
     }
-  }
 
-  useEffect(() => {
-    fetchData();
+    setState({ status: "ready", data: result.data, sectionErrors: result.errors });
   }, []);
 
-  const refetch = async () => {
-    setShowAllBookings(false);
-    await fetchData();
-  };
+  useEffect(() => { load(); }, [load]);
 
-  const handleCancelBooking = async (id: string) => {
-    await cancelBooking(id);
-    setData((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        upcomingBookings: prev.upcomingBookings.filter((b) => b.id !== id),
-      };
-    });
-  };
-
-  const handleCancelToday = async (bookingId: string) => {
+  const handleCancelBooking = useCallback(async (bookingId: string) => {
+    if (state.status !== "ready") return;
     await cancelBooking(bookingId);
-    setData((prev) => {
-      if (!prev) return prev;
+    // Optimistically remove from local state
+    setState((prev) => {
+      if (prev.status !== "ready") return prev;
       return {
         ...prev,
-        todayBooking: {
-          hasTodayBooking: false,
-          seatCode: null,
-          floor: null,
-          bookingId: null,
+        data: {
+          ...prev.data,
+          upcomingBookings: prev.data.upcomingBookings.filter((b) => b.id !== bookingId),
         },
       };
     });
+  }, [state.status]);
+
+  const handleCancelToday = useCallback(async (bookingId: string) => {
+    if (state.status !== "ready") return;
+    await cancelBooking(bookingId);
+    setState((prev) => {
+      if (prev.status !== "ready") return prev;
+      return {
+        ...prev,
+        data: {
+          ...prev.data,
+          todayBooking: { hasTodayBooking: false, seatCode: null, floor: null, bookingId: null },
+        },
+      };
+    });
+  }, [state.status]);
+
+  // Derived values — safe regardless of state
+  const data = state.status === "ready" ? state.data : null;
+  const visibleBookings = data?.upcomingBookings.slice(0, MAX_VISIBLE_BOOKINGS) ?? [];
+  const totalBookingsCount = data?.upcomingBookings.length ?? 0;
+  const sectionErrors = state.status === "ready" ? state.sectionErrors : [];
+
+  return {
+    // State
+    isLoading: state.status === "idle" || state.status === "loading",
+    isFatal: state.status === "fatal",
+    fatalError: state.status === "fatal" ? state.error : null,
+    data,
+    sectionErrors,
+    // Actions
+    refetch: load,
+    visibleBookings,
+    totalBookingsCount,
+    handleCancelBooking,
+    handleCancelToday,
   };
-
-  const allBookings = data?.upcomingBookings ?? [];
-
-  const visibleBookings = (data?.upcomingBookings ?? []).slice(0, 2);
-
-return {
-  data,
-  isLoading,
-  error,
-  refetch,
-  visibleBookings,
-  totalBookingsCount: data?.upcomingBookings.length ?? 0,
-  handleCancelBooking,
-  handleCancelToday,
-};
 }
