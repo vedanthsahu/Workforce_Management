@@ -175,6 +175,65 @@ def fetch_booking_by_id(
         )
         row = cur.fetchone()
     return dict(row) if row else None
+def fetch_booking_by_id_for_update(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    booking_id: str,
+) -> dict[str, Any] | None:
+    """Fetch one booking row and lock it for transactional mutation."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+                b.id::text AS booking_id,
+                b.tenant_id::text AS tenant_id,
+                b.user_id::text AS user_id,
+                b.seat_id::text AS seat_id,
+                b.site_id::text AS site_id,
+                b.building_id::text AS building_id,
+                b.floor_id::text AS floor_id,
+                b.booking_date,
+                b.booking_status,
+                b.cancelled_at,
+                b.cancellation_reason
+            FROM bookings AS b
+            WHERE b.id = %s
+              AND b.tenant_id = %s
+            FOR UPDATE
+            """,
+            (booking_id, tenant_id),
+        )
+
+        row = cur.fetchone()
+
+    return dict(row) if row else None
+def cancel_booking(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    booking_id: str,
+    cancellation_reason: str,
+) -> None:
+    """Soft-cancel one booking."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE bookings
+            SET
+                booking_status = 'CANCELLED',
+                cancelled_at = NOW(),
+                cancellation_reason = %s,
+                updated_at = NOW()
+            WHERE id = %s
+              AND tenant_id = %s
+            """,
+            (
+                cancellation_reason,
+                booking_id,
+                tenant_id,
+            ),
+        )
 
 
 def fetch_bookings_for_user(

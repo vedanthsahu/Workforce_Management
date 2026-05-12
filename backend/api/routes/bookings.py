@@ -10,8 +10,8 @@ from psycopg2.extensions import connection as PGConnection
 
 from backend.api.deps import get_current_user
 from backend.db.connection import get_db
-from backend.schemas.booking import AvailableSeatResponse, BookingResponse, CreateBookingRequest
-from backend.services.booking_service import book_seat, get_available_seats, get_user_past_bookings,get_user_current_bookings,get_user_future_bookings
+from backend.schemas.booking import AvailableSeatResponse, BookingResponse, CreateBookingRequest, CancelBookingRequest, ModifyBookingRequest
+from backend.services.booking_service import book_seat, get_available_seats, get_user_past_bookings,get_user_current_bookings,get_user_future_bookings, cancel_booking_by_id, modify_booking
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -63,7 +63,32 @@ def available_seats(
         floor_id=str(floor_id),
         booking_date=resolved_booking_date,
     )
-
+@router.post("/{booking_id}/cancel", response_model=BookingResponse)
+def cancel_booking_route(
+    booking_id: str,
+    payload: CancelBookingRequest,
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    conn: Annotated[PGConnection, Depends(get_db)],
+) -> BookingResponse:
+    return cancel_booking_by_id(
+        conn,
+        current_user=current_user,
+        booking_id=booking_id,
+        cancellation_reason=payload.cancellation_reason,
+    )
+@router.post("/{booking_id}/modify", response_model=BookingResponse)
+def modify_booking_route(
+    booking_id: str,
+    payload: ModifyBookingRequest,
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    conn: Annotated[PGConnection, Depends(get_db)],
+) -> BookingResponse:
+    return modify_booking(
+        conn,
+        current_user=current_user,
+        booking_id=booking_id,
+        payload=payload,
+    )
 
 def _resolve_booking_date(
     booking_date: date | None,
