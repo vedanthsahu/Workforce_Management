@@ -6,6 +6,7 @@ import {
   Seat,
   CreateBookingPayload,
   CreateBookingResponse,
+  Preference,
 } from "../types/Bookingform.types";
 
 // ── Sites ─────────────────────────────────────────────────────────────────────
@@ -91,4 +92,16 @@ export async function createBooking(
     payload
   );
   return data;
+}
+
+export async function fetchPreferences(): Promise<Preference[]> {
+  const { data } = await axiosInstance.get<{ amenities: any[] }>("/preferences");
+  return data.amenities.map((a) => ({
+    id: a.id,
+    key: a.key,
+    name: a.name,
+    category: a.category ?? null,
+    description: a.description ?? null,
+    icon: a.icon ?? null,
+  }));
 }

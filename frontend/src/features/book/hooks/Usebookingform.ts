@@ -1,299 +1,3 @@
-// "use client";
-
-// import { useCallback, useEffect, useState } from "react";
-// import {
-//   BookingFormState,
-//   BookingStep,
-//   Building,
-//   CreateBookingResponse,
-//   Floor,
-//   PreferenceKey,
-//   Seat,
-//   Site,
-// } from "../types/Bookingform.types";
-
-// import {
-//   createBooking,
-//   fetchBuildings,
-//   fetchFloors,
-//   fetchSeats,
-//   fetchSites,
-// } from "../services/Bookingform.service";
-
-// // ── Default form state ────────────────────────────────────────────────────────
-
-// function todayIso(): string {
-//   return new Date().toISOString().slice(0, 10);
-// }
-
-// function plusDaysIso(n: number): string {
-//   const d = new Date();
-//   d.setDate(d.getDate() + n);
-//   return d.toISOString().slice(0, 10);
-// }
-
-// const DEFAULT_STATE: BookingFormState = {
-//   siteId: "",
-//   buildingId: "",
-//   floorId: "",
-//   fromDate: todayIso(),
-//   toDate: plusDaysIso(2),
-//   preferences: [],
-//   selectedSeatId: null,
-// };
-
-// // ── Hook ──────────────────────────────────────────────────────────────────────
-
-// export function useBookingForm() {
-//   // ── Navigation ──────────────────────────────────────────────────────────────
-//   const [step, setStep] = useState<BookingStep>(1);
-
-//   // ── Form values ─────────────────────────────────────────────────────────────
-//   const [form, setForm] = useState<BookingFormState>(DEFAULT_STATE);
-
-//   // ── Reference data ──────────────────────────────────────────────────────────
-//   const [sites, setSites] = useState<Site[]>([]);
-//   const [buildings, setBuildings] = useState<Building[]>([]);
-//   const [floors, setFloors] = useState<Floor[]>([]);
-//   const [seats, setSeats] = useState<Seat[]>([]);
-
-//   // ── Loading / error per resource ───────────────────────────────────────────
-//   const [loadingSites, setLoadingSites] = useState(false);
-//   const [loadingBuildings, setLoadingBuildings] = useState(false);
-//   const [loadingFloors, setLoadingFloors] = useState(false);
-//   const [loadingSeats, setLoadingSeats] = useState(false);
-//   const [submitting, setSubmitting] = useState(false);
-
-//   const [error, setError] = useState<string | null>(null);
-
-//   const [confirmation, setConfirmation] =
-//     useState<CreateBookingResponse | null>(null);
-
-//   // ── Load sites on mount ────────────────────────────────────────────────────
-//   useEffect(() => {
-//     setLoadingSites(true);
-//     fetchSites()
-//       .then(setSites)
-//       .catch((e) => setError(e.message))
-//       .finally(() => setLoadingSites(false));
-//   }, []);
-
-//   // ── Load buildings when siteId changes ────────────────────────────────────
-//   useEffect(() => {
-//     if (!form.siteId) {
-//       setBuildings([]);
-//       setFloors([]);
-//       return;
-//     }
-
-//     setLoadingBuildings(true);
-//     fetchBuildings(form.siteId)
-//       .then(setBuildings)
-//       .catch((e) => setError(e.message))
-//       .finally(() => setLoadingBuildings(false));
-//   }, [form.siteId]);
-
-//   // ── Load floors when buildingId changes ───────────────────────────────────
-//   useEffect(() => {
-//     if (!form.buildingId) {
-//       setFloors([]);
-//       return;
-//     }
-
-//     setLoadingFloors(true);
-//     fetchFloors(form.buildingId)
-//       .then(setFloors)
-//       .catch((e) => setError(e.message))
-//       .finally(() => setLoadingFloors(false));
-//   }, [form.buildingId]);
-
-//   // ── Field setters ──────────────────────────────────────────────────────────
-
-//   // Changing site resets building + floor selections
-//   const setSiteId = (v: string | null) =>
-//     setForm((f) => ({
-//       ...f,
-//       siteId: v ?? "",
-//       buildingId: "",
-//       floorId: "",
-//       selectedSeatId: null,
-//     }));
-
-//   // Changing building resets floor selection
-//   const setBuildingId = (v: string | null) =>
-//     setForm((f) => ({
-//       ...f,
-//       buildingId: v ?? "",
-//       floorId: "",
-//       selectedSeatId: null,
-//     }));
-
-//   const setFloorId = (v: string | null) =>
-//     setForm((f) => ({
-//       ...f,
-//       floorId: v ?? "",
-//       selectedSeatId: null,
-//     }));
-
-//   const setFromDate = (v: string) =>
-//     setForm((f) => ({
-//       ...f,
-//       fromDate: v,
-//       toDate: f.toDate < v ? v : f.toDate,
-//     }));
-
-//   const setToDate = (v: string) =>
-//     setForm((f) => ({ ...f, toDate: v }));
-
-//   const togglePreference = (key: PreferenceKey) =>
-//     setForm((f) => ({
-//       ...f,
-//       preferences: f.preferences.includes(key)
-//         ? f.preferences.filter((p) => p !== key)
-//         : [...f.preferences, key],
-//     }));
-
-//   const clearAll = () =>
-//     setForm((f) => ({ ...f, preferences: [] }));
-
-//   // ── Step 1 → Step 2: load seats ────────────────────────────────────────────
-
-//   const findAvailableSeats = useCallback(async () => {
-//     if (!form.floorId || !form.fromDate || !form.toDate) return;
-
-//     setLoadingSeats(true);
-//     setError(null);
-
-//     try {
-//       const data = await fetchSeats({
-//         floorId: form.floorId,
-//         fromDate: form.fromDate,
-//         toDate: form.toDate,
-//         preferences: form.preferences,
-//       });
-
-//       setSeats(data);
-//       setStep(2);
-//     } catch (e: unknown) {
-//       setError(e instanceof Error ? e.message : "Failed to load seats");
-//     } finally {
-//       setLoadingSeats(false);
-//     }
-//   }, [form]);
-
-//   // ── Step 2: select seat ────────────────────────────────────────────────────
-
-//   const selectSeat = (seatId: string) =>
-//     setForm((f) => ({ ...f, selectedSeatId: seatId }));
-
-//   const goToReview = () => {
-//     if (!form.selectedSeatId) return;
-//     setStep(3);
-//   };
-
-//   // ── Step 3: confirm booking ────────────────────────────────────────────────
-
-//   const confirmBooking = useCallback(async () => {
-//     if (!form.selectedSeatId) return;
-
-//     setSubmitting(true);
-//     setError(null);
-
-//     try {
-//       const result = await createBooking({
-//         siteId: form.siteId,
-//         buildingId: form.buildingId,
-//         floorId: form.floorId,
-//         seatId: form.selectedSeatId,
-//         fromDate: form.fromDate,
-//         toDate: form.toDate,
-//         preferences: form.preferences,
-//       });
-
-//       setConfirmation(result);
-//     } catch (e: unknown) {
-//       setError(
-//         e instanceof Error ? e.message : "Booking failed. Please try again."
-//       );
-//     } finally {
-//       setSubmitting(false);
-//     }
-//   }, [form]);
-
-//   // ── Navigation helpers ─────────────────────────────────────────────────────
-
-//   const goBack = () =>
-//     setStep((s) => (s > 1 ? ((s - 1) as BookingStep) : s));
-
-//   const resetForm = () => {
-//     setForm(DEFAULT_STATE);
-//     setBuildings([]);
-//     setFloors([]);
-//     setSeats([]);
-//     setConfirmation(null);
-//     setError(null);
-//     setStep(1);
-//   };
-
-//   // ── Derived ────────────────────────────────────────────────────────────────
-
-//   const selectedSite = sites.find((s) => s.id === form.siteId);
-//   const selectedBuilding = buildings.find((b) => b.id === form.buildingId);
-//   const selectedFloor = floors.find((f) => f.id === form.floorId);
-//   const selectedSeat = seats.find((s) => s.id === form.selectedSeatId);
-
-//   const dayCount = (() => {
-//     if (!form.fromDate || !form.toDate) return 0;
-//     const diff =
-//       new Date(form.toDate + "T00:00:00").getTime() -
-//       new Date(form.fromDate + "T00:00:00").getTime();
-//     return Math.round(diff / 86_400_000) + 1;
-//   })();
-
-//   const step1Valid =
-//     !!form.siteId &&
-//     !!form.buildingId &&
-//     !!form.floorId &&
-//     !!form.fromDate &&
-//     !!form.toDate;
-
-//   return {
-//     step,
-//     form,
-//     sites,
-//     buildings,
-//     floors,
-//     seats,
-//     confirmation,
-//     error,
-//     loadingSites,
-//     loadingBuildings,
-//     loadingFloors,
-//     loadingSeats,
-//     submitting,
-//     selectedSite,
-//     selectedBuilding,
-//     selectedFloor,
-//     selectedSeat,
-//     dayCount,
-//     step1Valid,
-//     setSiteId,
-//     setBuildingId,
-//     setFloorId,
-//     setFromDate,
-//     setToDate,
-//     togglePreference,
-//     clearAll,
-//     findAvailableSeats,
-//     selectSeat,
-//     goToReview,
-//     confirmBooking,
-//     goBack,
-//     resetForm,
-//   };
-// }
-
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -303,7 +7,7 @@ import {
   Building,
   CreateBookingResponse,
   Floor,
-  PreferenceKey,
+  Preference,
   Seat,
   Site,
 } from "../types/Bookingform.types";
@@ -312,6 +16,7 @@ import {
   createBooking,
   fetchBuildings,
   fetchFloors,
+  fetchPreferences,
   fetchSeats,
   fetchSites,
 } from "../services/Bookingform.service";
@@ -344,11 +49,13 @@ export function useBookingForm() {
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [floors, setFloors] = useState<Floor[]>([]);
   const [seats, setSeats] = useState<Seat[]>([]);
+  const [availablePreferences, setAvailablePreferences] = useState<Preference[]>([]);  // ← renamed
 
   const [loadingSites, setLoadingSites] = useState(false);
   const [loadingBuildings, setLoadingBuildings] = useState(false);
   const [loadingFloors, setLoadingFloors] = useState(false);
   const [loadingSeats, setLoadingSeats] = useState(false);
+  const [loadingPreferences, setLoadingPreferences] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
@@ -363,6 +70,15 @@ export function useBookingForm() {
       .finally(() => setLoadingSites(false));
   }, []);
 
+  // ── Load preferences on mount ────────────────────────────────────────────
+  useEffect(() => {
+    setLoadingPreferences(true);
+    fetchPreferences()
+      .then(setAvailablePreferences)                // ← updated setter
+      .catch((e) => setError(e.message))
+      .finally(() => setLoadingPreferences(false));
+  }, []);
+
   // ── Load buildings when siteId changes ──────────────────────────────────
   useEffect(() => {
     if (!form.siteId) {
@@ -370,13 +86,9 @@ export function useBookingForm() {
       setFloors([]);
       return;
     }
-
-    // Clear stale data before fetching so switching between sites with
-    // buildings that share the same ID always shows fresh results.
     setBuildings([]);
     setFloors([]);
     setLoadingBuildings(true);
-
     fetchBuildings(form.siteId)
       .then(setBuildings)
       .catch((e) => setError(e.message))
@@ -389,11 +101,8 @@ export function useBookingForm() {
       setFloors([]);
       return;
     }
-
-    // Clear stale floors before fetching for the same reason as above.
     setFloors([]);
     setLoadingFloors(true);
-
     fetchFloors(form.buildingId)
       .then(setFloors)
       .catch((e) => setError(e.message))
@@ -436,7 +145,8 @@ export function useBookingForm() {
   const setToDate = (v: string) =>
     setForm((f) => ({ ...f, toDate: v }));
 
-  const togglePreference = (key: PreferenceKey) =>
+  // ← fixed: was using PreferenceKey, now plain string
+  const togglePreference = (key: string) =>
     setForm((f) => ({
       ...f,
       preferences: f.preferences.includes(key)
@@ -462,7 +172,6 @@ export function useBookingForm() {
         toDate: form.toDate,
         preferences: form.preferences,
       });
-
       setSeats(data);
       setStep(2);
     } catch (e: unknown) {
@@ -500,7 +209,6 @@ export function useBookingForm() {
         toDate: form.toDate,
         preferences: form.preferences,
       });
-
       setConfirmation(result);
     } catch (e: unknown) {
       setError(
@@ -555,12 +263,14 @@ export function useBookingForm() {
     buildings,
     floors,
     seats,
+    availablePreferences,     // ← exposed for the UI
     confirmation,
     error,
     loadingSites,
     loadingBuildings,
     loadingFloors,
     loadingSeats,
+    loadingPreferences,       // ← exposed for the UI
     submitting,
     selectedSite,
     selectedBuilding,

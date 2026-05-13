@@ -9,6 +9,7 @@ import {
   MonitorDot,
   RefreshCw,
   Settings2,
+  Star,
   UtensilsCrossed,
   Waves,
   Wind,
@@ -33,7 +34,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
 import { useBookingForm } from "../hooks/Usebookingform";
-import { PreferenceKey, Seat } from "../types/Bookingform.types";
+import { Seat } from "../types/Bookingform.types";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -42,14 +43,17 @@ function fmtDate(iso: string): string {
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
 }
 
-// ── Preference config ─────────────────────────────────────────────────────────
+// ── Preference icon helper ────────────────────────────────────────────────────
 
-const PREFERENCES: { key: PreferenceKey; label: string; icon: React.ReactNode }[] = [
-  { key: "window",      label: "Window Seat",   icon: <Wind size={20} className="text-green-500" /> },
-  { key: "cafeteria",   label: "Near Cafeteria", icon: <UtensilsCrossed size={20} className="text-orange-400" /> },
-  { key: "elevator",    label: "Near Elevator",  icon: <Waves size={20} className="text-violet-500" /> },
-  { key: "dualMonitor", label: "Dual Monitor",   icon: <MonitorDot size={20} className="text-blue-500" /> },
-];
+function getPreferenceIcon(key: string): React.ReactNode {
+  switch (key) {
+    case "window":      return <Wind size={20} className="text-green-500" />;
+    case "cafeteria":   return <UtensilsCrossed size={20} className="text-orange-400" />;
+    case "elevator":    return <Waves size={20} className="text-violet-500" />;
+    case "dualMonitor": return <MonitorDot size={20} className="text-blue-500" />;
+    default:            return <Star size={20} className="text-gray-400" />;
+  }
+}
 
 // ── Step indicator ────────────────────────────────────────────────────────────
 
@@ -197,6 +201,8 @@ const BookASeatPage: React.FC = () => {
     confirmBooking,
     goBack,
     resetForm,
+    availablePreferences,
+    loadingPreferences,
   } = useBookingForm();
 
   // Group seats by row for the floor map
@@ -208,18 +214,11 @@ const BookASeatPage: React.FC = () => {
   const todayIso = new Date().toISOString().slice(0, 10);
 
   // ── Derived display labels for dropdowns ──────────────────────────────────
-  // const selectedSiteLabel = React.useMemo(() => {
-  //   if (!form.siteId) return undefined;
-  //   const s = sites.find((x) => x.id === form.siteId);
-  //   if (!s) return form.siteId;
-  //   return [s.name, s.city, s.country].filter(Boolean).join(" — ");
-  // }, [form.siteId, sites]);
-
   const selectedSiteLabel = React.useMemo(() => {
-  if (!form.siteId) return undefined;
-  const s = sites.find((x) => x.id === form.siteId);
-  return s?.name ?? form.siteId;  // ← only s.name, not the full joined string
-}, [form.siteId, sites]);
+    if (!form.siteId) return undefined;
+    const s = sites.find((x) => x.id === form.siteId);
+    return s?.name ?? form.siteId;
+  }, [form.siteId, sites]);
 
   const selectedBuildingLabel = React.useMemo(() => {
     if (!form.buildingId) return undefined;
@@ -334,7 +333,7 @@ const BookASeatPage: React.FC = () => {
                       <SelectContent>
                         {sites.map((s) => (
                           <SelectItem key={s.id} value={s.id}>
-                            {[s.name].filter(Boolean).join(" — ")}
+                            {s.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -442,29 +441,33 @@ const BookASeatPage: React.FC = () => {
                   subtitle="Choose features that are important to you"
                 />
                 <div className="flex gap-3 flex-wrap">
-                  {PREFERENCES.map(({ key, label, icon }) => {
-                    const checked = form.preferences.includes(key);
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => togglePreference(key)}
-                        className={cn(
-                          "flex flex-col items-center gap-2 px-5 py-4 rounded-xl border transition-all duration-150 w-[140px]",
-                          checked
-                            ? "border-indigo-300 bg-indigo-50 shadow-sm"
-                            : "border-[#EBEBF5] bg-white hover:border-gray-300 hover:bg-gray-50"
-                        )}
-                      >
-                        {icon}
-                        <span className="text-[12.5px] font-medium text-[#1A1A2E]">{label}</span>
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={() => togglePreference(key)}
-                          className="pointer-events-none"
-                        />
-                      </button>
-                    );
-                  })}
+                  {loadingPreferences ? (
+                    <p className="text-[12.5px] text-gray-400">Loading preferences…</p>
+                  ) : (
+                    availablePreferences.map(({ key, name }) => {
+                      const checked = form.preferences.includes(key);
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => togglePreference(key)}
+                          className={cn(
+                            "flex flex-col items-center gap-2 px-5 py-4 rounded-xl border transition-all duration-150 w-[140px]",
+                            checked
+                              ? "border-indigo-300 bg-indigo-50 shadow-sm"
+                              : "border-[#EBEBF5] bg-white hover:border-gray-300 hover:bg-gray-50"
+                          )}
+                        >
+                          {getPreferenceIcon(key)}
+                          <span className="text-[12.5px] font-medium text-[#1A1A2E]">{name}</span>
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={() => togglePreference(key)}
+                            className="pointer-events-none"
+                          />
+                        </button>
+                      );
+                    })
+                  )}
 
                   {/* Tip card */}
                   <div className="flex-1 min-w-[180px] bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 flex flex-col gap-1">
@@ -580,16 +583,17 @@ const BookASeatPage: React.FC = () => {
                     <p className="text-[13px] font-semibold text-indigo-700">
                       Seat {selectedSeat.label} selected
                     </p>
+                    {/* ── FIX: use availablePreferences + pref.name ── */}
                     <div className="flex gap-1.5 mt-1.5">
                       {selectedSeat.amenities.map((a) => {
-                        const pref = PREFERENCES.find((p) => p.key === a);
+                        const pref = availablePreferences.find((p) => p.key === a);
                         return pref ? (
                           <Badge
                             key={a}
                             variant="secondary"
                             className="text-[10px] px-2 py-0.5 bg-white border border-indigo-100 text-indigo-600"
                           >
-                            {pref.label}
+                            {pref.name}
                           </Badge>
                         ) : null;
                       })}
@@ -637,13 +641,14 @@ const BookASeatPage: React.FC = () => {
                 <SummaryRow label="Duration"  value={`${dayCount} ${dayCount === 1 ? "day" : "days"}`} />
                 <div className="py-3 flex justify-between items-center">
                   <span className="text-[12.5px] text-gray-500">Preferences</span>
+                  {/* ── FIX: use availablePreferences + pref.name ── */}
                   <div className="flex gap-1.5 flex-wrap justify-end">
                     {form.preferences.length > 0
                       ? form.preferences.map((p) => {
-                          const pref = PREFERENCES.find((x) => x.key === p);
+                          const pref = availablePreferences.find((x) => x.key === p);
                           return pref ? (
                             <Badge key={p} variant="secondary" className="text-[11px]">
-                              {pref.label}
+                              {pref.name}
                             </Badge>
                           ) : null;
                         })

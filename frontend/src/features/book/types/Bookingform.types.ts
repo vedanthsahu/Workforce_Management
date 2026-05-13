@@ -1,11 +1,9 @@
-// ── Workspace / location ──────────────────────────────────────────────────────
-
 export interface Site {
   id: string;
   name: string;
   city: string;
   country: string;
-  timezone: string; // e.g. "Asia/Kolkata"
+  timezone: string;
 }
 
 export interface Building {
@@ -17,18 +15,19 @@ export interface Building {
 export interface Floor {
   id: string;
   buildingId: string;
-  name: string; // e.g. "7th Floor"
+  name: string;
   number: number;
 }
 
-// ── Preferences ───────────────────────────────────────────────────────────────
-
-export type PreferenceKey = "window" | "cafeteria" | "elevator" | "dualMonitor";
+// ── Preferences (fetched from API) ────────────────────────────────────────────
 
 export interface Preference {
-  key: PreferenceKey;
-  label: string;
-  icon: string; // Lucide icon name or emoji fallback
+  id: string;
+  key: string;
+  name: string;
+  category?: string | null;
+  description?: string | null;
+  icon?: string | null;
 }
 
 // ── Booking form state ────────────────────────────────────────────────────────
@@ -38,14 +37,12 @@ export interface BookingFormState {
   siteId: string;
   buildingId: string;
   floorId: string;
-  fromDate: string; // ISO date "YYYY-MM-DD"
+  fromDate: string;
   toDate: string;
-  preferences: PreferenceKey[];
+  preferences: string[];       // ← was PreferenceKey[]
 
   // Step 2
   selectedSeatId: string | null;
-
-  // Step 3 – read-only summary derived from above
 }
 
 // ── Seat (for floor map step) ─────────────────────────────────────────────────
@@ -54,12 +51,12 @@ export type SeatStatus = "available" | "booked" | "unavailable" | "yours";
 
 export interface Seat {
   id: string;
-  label: string; // e.g. "A-14"
+  label: string;
   row: number;
   col: number;
   status: SeatStatus;
   matchesPreferences: boolean;
-  amenities: PreferenceKey[];
+  amenities: string[];         // ← was PreferenceKey[]
 }
 
 // ── Booking confirmation payload ──────────────────────────────────────────────
@@ -71,7 +68,7 @@ export interface CreateBookingPayload {
   seatId: string;
   fromDate: string;
   toDate: string;
-  preferences: PreferenceKey[];
+  preferences: string[];       // ← was PreferenceKey[]
 }
 
 export interface CreateBookingResponse {
