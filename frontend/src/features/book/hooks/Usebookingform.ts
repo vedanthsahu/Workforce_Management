@@ -1,9 +1,24 @@
 // "use client";
 
 // import { useCallback, useEffect, useState } from "react";
-// import { BookingFormState, BookingStep, Building, CreateBookingResponse, Floor, PreferenceKey, Seat, Site } from "../types/Bookingform.types";
-// import { createBooking, fetchBuildings, fetchFloors, fetchSeats, fetchSites } from "../services/Bookingform.service";
+// import {
+//   BookingFormState,
+//   BookingStep,
+//   Building,
+//   CreateBookingResponse,
+//   Floor,
+//   PreferenceKey,
+//   Seat,
+//   Site,
+// } from "../types/Bookingform.types";
 
+// import {
+//   createBooking,
+//   fetchBuildings,
+//   fetchFloors,
+//   fetchSeats,
+//   fetchSites,
+// } from "../services/Bookingform.service";
 
 // // ── Default form state ────────────────────────────────────────────────────────
 
@@ -37,22 +52,24 @@
 //   const [form, setForm] = useState<BookingFormState>(DEFAULT_STATE);
 
 //   // ── Reference data ──────────────────────────────────────────────────────────
-//   const [sites, setSites]         = useState<Site[]>([]);
+//   const [sites, setSites] = useState<Site[]>([]);
 //   const [buildings, setBuildings] = useState<Building[]>([]);
-//   const [floors, setFloors]       = useState<Floor[]>([]);
-//   const [seats, setSeats]         = useState<Seat[]>([]);
+//   const [floors, setFloors] = useState<Floor[]>([]);
+//   const [seats, setSeats] = useState<Seat[]>([]);
 
-//   // ── Loading / error per resource ────────────────────────────────────────────
-//   const [loadingSites,     setLoadingSites]     = useState(false);
+//   // ── Loading / error per resource ───────────────────────────────────────────
+//   const [loadingSites, setLoadingSites] = useState(false);
 //   const [loadingBuildings, setLoadingBuildings] = useState(false);
-//   const [loadingFloors,    setLoadingFloors]    = useState(false);
-//   const [loadingSeats,     setLoadingSeats]     = useState(false);
-//   const [submitting,       setSubmitting]       = useState(false);
+//   const [loadingFloors, setLoadingFloors] = useState(false);
+//   const [loadingSeats, setLoadingSeats] = useState(false);
+//   const [submitting, setSubmitting] = useState(false);
 
-//   const [error,            setError]            = useState<string | null>(null);
-//   const [confirmation,     setConfirmation]     = useState<CreateBookingResponse | null>(null);
+//   const [error, setError] = useState<string | null>(null);
 
-//   // ── Load sites on mount ─────────────────────────────────────────────────────
+//   const [confirmation, setConfirmation] =
+//     useState<CreateBookingResponse | null>(null);
+
+//   // ── Load sites on mount ────────────────────────────────────────────────────
 //   useEffect(() => {
 //     setLoadingSites(true);
 //     fetchSites()
@@ -61,40 +78,72 @@
 //       .finally(() => setLoadingSites(false));
 //   }, []);
 
-//   // ── Load buildings when site changes ────────────────────────────────────────
+//   // ── Load buildings when siteId changes ────────────────────────────────────
 //   useEffect(() => {
-//     if (!form.siteId) { setBuildings([]); return; }
+//     if (!form.siteId) {
+//       setBuildings([]);
+//       setFloors([]);
+//       return;
+//     }
+
 //     setLoadingBuildings(true);
-//     setForm((f) => ({ ...f, buildingId: "", floorId: "" }));
-//     setFloors([]);
 //     fetchBuildings(form.siteId)
 //       .then(setBuildings)
 //       .catch((e) => setError(e.message))
 //       .finally(() => setLoadingBuildings(false));
 //   }, [form.siteId]);
 
-//   // ── Load floors when building changes ───────────────────────────────────────
+//   // ── Load floors when buildingId changes ───────────────────────────────────
 //   useEffect(() => {
-//     if (!form.buildingId) { setFloors([]); return; }
+//     if (!form.buildingId) {
+//       setFloors([]);
+//       return;
+//     }
+
 //     setLoadingFloors(true);
-//     setForm((f) => ({ ...f, floorId: "" }));
 //     fetchFloors(form.buildingId)
 //       .then(setFloors)
 //       .catch((e) => setError(e.message))
 //       .finally(() => setLoadingFloors(false));
 //   }, [form.buildingId]);
 
-//   // ── Field setters ───────────────────────────────────────────────────────────
+//   // ── Field setters ──────────────────────────────────────────────────────────
 
-//   const setSiteId     = (v: string) => setForm((f) => ({ ...f, siteId: v }));
-//   const setBuildingId = (v: string) => setForm((f) => ({ ...f, buildingId: v }));
-//   const setFloorId    = (v: string) => setForm((f) => ({ ...f, floorId: v }));
-//   const setFromDate   = (v: string) => setForm((f) => ({
-//     ...f,
-//     fromDate: v,
-//     toDate: f.toDate < v ? v : f.toDate,
-//   }));
-//   const setToDate     = (v: string) => setForm((f) => ({ ...f, toDate: v }));
+//   // Changing site resets building + floor selections
+//   const setSiteId = (v: string | null) =>
+//     setForm((f) => ({
+//       ...f,
+//       siteId: v ?? "",
+//       buildingId: "",
+//       floorId: "",
+//       selectedSeatId: null,
+//     }));
+
+//   // Changing building resets floor selection
+//   const setBuildingId = (v: string | null) =>
+//     setForm((f) => ({
+//       ...f,
+//       buildingId: v ?? "",
+//       floorId: "",
+//       selectedSeatId: null,
+//     }));
+
+//   const setFloorId = (v: string | null) =>
+//     setForm((f) => ({
+//       ...f,
+//       floorId: v ?? "",
+//       selectedSeatId: null,
+//     }));
+
+//   const setFromDate = (v: string) =>
+//     setForm((f) => ({
+//       ...f,
+//       fromDate: v,
+//       toDate: f.toDate < v ? v : f.toDate,
+//     }));
+
+//   const setToDate = (v: string) =>
+//     setForm((f) => ({ ...f, toDate: v }));
 
 //   const togglePreference = (key: PreferenceKey) =>
 //     setForm((f) => ({
@@ -104,14 +153,17 @@
 //         : [...f.preferences, key],
 //     }));
 
-//   const clearAll = () => setForm((f) => ({ ...f, preferences: [] }));
+//   const clearAll = () =>
+//     setForm((f) => ({ ...f, preferences: [] }));
 
-//   // ── Step 1 → Step 2: load seats ─────────────────────────────────────────────
+//   // ── Step 1 → Step 2: load seats ────────────────────────────────────────────
 
 //   const findAvailableSeats = useCallback(async () => {
 //     if (!form.floorId || !form.fromDate || !form.toDate) return;
+
 //     setLoadingSeats(true);
 //     setError(null);
+
 //     try {
 //       const data = await fetchSeats({
 //         floorId: form.floorId,
@@ -119,6 +171,7 @@
 //         toDate: form.toDate,
 //         preferences: form.preferences,
 //       });
+
 //       setSeats(data);
 //       setStep(2);
 //     } catch (e: unknown) {
@@ -128,7 +181,7 @@
 //     }
 //   }, [form]);
 
-//   // ── Step 2: select seat ──────────────────────────────────────────────────────
+//   // ── Step 2: select seat ────────────────────────────────────────────────────
 
 //   const selectSeat = (seatId: string) =>
 //     setForm((f) => ({ ...f, selectedSeatId: seatId }));
@@ -138,48 +191,56 @@
 //     setStep(3);
 //   };
 
-//   // ── Step 3: confirm booking ──────────────────────────────────────────────────
+//   // ── Step 3: confirm booking ────────────────────────────────────────────────
 
 //   const confirmBooking = useCallback(async () => {
 //     if (!form.selectedSeatId) return;
+
 //     setSubmitting(true);
 //     setError(null);
+
 //     try {
 //       const result = await createBooking({
-//         siteId:      form.siteId,
-//         buildingId:  form.buildingId,
-//         floorId:     form.floorId,
-//         seatId:      form.selectedSeatId,
-//         fromDate:    form.fromDate,
-//         toDate:      form.toDate,
+//         siteId: form.siteId,
+//         buildingId: form.buildingId,
+//         floorId: form.floorId,
+//         seatId: form.selectedSeatId,
+//         fromDate: form.fromDate,
+//         toDate: form.toDate,
 //         preferences: form.preferences,
 //       });
+
 //       setConfirmation(result);
 //     } catch (e: unknown) {
-//       setError(e instanceof Error ? e.message : "Booking failed. Please try again.");
+//       setError(
+//         e instanceof Error ? e.message : "Booking failed. Please try again."
+//       );
 //     } finally {
 //       setSubmitting(false);
 //     }
 //   }, [form]);
 
-//   // ── Navigation helpers ───────────────────────────────────────────────────────
+//   // ── Navigation helpers ─────────────────────────────────────────────────────
 
-//   const goBack = () => setStep((s) => (s > 1 ? ((s - 1) as BookingStep) : s));
+//   const goBack = () =>
+//     setStep((s) => (s > 1 ? ((s - 1) as BookingStep) : s));
 
 //   const resetForm = () => {
 //     setForm(DEFAULT_STATE);
+//     setBuildings([]);
+//     setFloors([]);
 //     setSeats([]);
 //     setConfirmation(null);
 //     setError(null);
 //     setStep(1);
 //   };
 
-//   // ── Derived ──────────────────────────────────────────────────────────────────
+//   // ── Derived ────────────────────────────────────────────────────────────────
 
-//   const selectedSite     = sites.find((s) => s.id === form.siteId);
+//   const selectedSite = sites.find((s) => s.id === form.siteId);
 //   const selectedBuilding = buildings.find((b) => b.id === form.buildingId);
-//   const selectedFloor    = floors.find((f) => f.id === form.floorId);
-//   const selectedSeat     = seats.find((s) => s.id === form.selectedSeatId);
+//   const selectedFloor = floors.find((f) => f.id === form.floorId);
+//   const selectedSeat = seats.find((s) => s.id === form.selectedSeatId);
 
 //   const dayCount = (() => {
 //     if (!form.fromDate || !form.toDate) return 0;
@@ -189,11 +250,14 @@
 //     return Math.round(diff / 86_400_000) + 1;
 //   })();
 
-//   const step1Valid = !!form.siteId && !!form.buildingId && !!form.floorId &&
-//     !!form.fromDate && !!form.toDate;
+//   const step1Valid =
+//     !!form.siteId &&
+//     !!form.buildingId &&
+//     !!form.floorId &&
+//     !!form.fromDate &&
+//     !!form.toDate;
 
 //   return {
-//     // state
 //     step,
 //     form,
 //     sites,
@@ -202,20 +266,17 @@
 //     seats,
 //     confirmation,
 //     error,
-//     // loading flags
 //     loadingSites,
 //     loadingBuildings,
 //     loadingFloors,
 //     loadingSeats,
 //     submitting,
-//     // derived
 //     selectedSite,
 //     selectedBuilding,
 //     selectedFloor,
 //     selectedSeat,
 //     dayCount,
 //     step1Valid,
-//     // actions
 //     setSiteId,
 //     setBuildingId,
 //     setFloorId,
@@ -255,8 +316,6 @@ import {
   fetchSites,
 } from "../services/Bookingform.service";
 
-// ── Default form state ────────────────────────────────────────────────────────
-
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -277,22 +336,15 @@ const DEFAULT_STATE: BookingFormState = {
   selectedSeatId: null,
 };
 
-// ── Hook ──────────────────────────────────────────────────────────────────────
-
 export function useBookingForm() {
-  // ── Navigation ──────────────────────────────────────────────────────────────
   const [step, setStep] = useState<BookingStep>(1);
-
-  // ── Form values ─────────────────────────────────────────────────────────────
   const [form, setForm] = useState<BookingFormState>(DEFAULT_STATE);
 
-  // ── Reference data ──────────────────────────────────────────────────────────
   const [sites, setSites] = useState<Site[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [floors, setFloors] = useState<Floor[]>([]);
   const [seats, setSeats] = useState<Seat[]>([]);
 
-  // ── Loading / error per resource ───────────────────────────────────────────
   const [loadingSites, setLoadingSites] = useState(false);
   const [loadingBuildings, setLoadingBuildings] = useState(false);
   const [loadingFloors, setLoadingFloors] = useState(false);
@@ -300,36 +352,30 @@ export function useBookingForm() {
   const [submitting, setSubmitting] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<CreateBookingResponse | null>(null);
 
-  const [confirmation, setConfirmation] =
-    useState<CreateBookingResponse | null>(null);
-
-  // ── Load sites on mount ────────────────────────────────────────────────────
+  // ── Load sites on mount ──────────────────────────────────────────────────
   useEffect(() => {
     setLoadingSites(true);
-
     fetchSites()
       .then(setSites)
       .catch((e) => setError(e.message))
       .finally(() => setLoadingSites(false));
   }, []);
 
-  // ── Load buildings when site changes ───────────────────────────────────────
+  // ── Load buildings when siteId changes ──────────────────────────────────
   useEffect(() => {
     if (!form.siteId) {
       setBuildings([]);
+      setFloors([]);
       return;
     }
 
-    setLoadingBuildings(true);
-
-    setForm((f) => ({
-      ...f,
-      buildingId: "",
-      floorId: "",
-    }));
-
+    // Clear stale data before fetching so switching between sites with
+    // buildings that share the same ID always shows fresh results.
+    setBuildings([]);
     setFloors([]);
+    setLoadingBuildings(true);
 
     fetchBuildings(form.siteId)
       .then(setBuildings)
@@ -337,19 +383,16 @@ export function useBookingForm() {
       .finally(() => setLoadingBuildings(false));
   }, [form.siteId]);
 
-  // ── Load floors when building changes ──────────────────────────────────────
+  // ── Load floors when buildingId changes ─────────────────────────────────
   useEffect(() => {
     if (!form.buildingId) {
       setFloors([]);
       return;
     }
 
+    // Clear stale floors before fetching for the same reason as above.
+    setFloors([]);
     setLoadingFloors(true);
-
-    setForm((f) => ({
-      ...f,
-      floorId: "",
-    }));
 
     fetchFloors(form.buildingId)
       .then(setFloors)
@@ -357,24 +400,30 @@ export function useBookingForm() {
       .finally(() => setLoadingFloors(false));
   }, [form.buildingId]);
 
-  // ── Field setters ──────────────────────────────────────────────────────────
+  // ── Field setters ────────────────────────────────────────────────────────
 
   const setSiteId = (v: string | null) =>
     setForm((f) => ({
       ...f,
       siteId: v ?? "",
+      buildingId: "",
+      floorId: "",
+      selectedSeatId: null,
     }));
 
   const setBuildingId = (v: string | null) =>
     setForm((f) => ({
       ...f,
       buildingId: v ?? "",
+      floorId: "",
+      selectedSeatId: null,
     }));
 
   const setFloorId = (v: string | null) =>
     setForm((f) => ({
       ...f,
       floorId: v ?? "",
+      selectedSeatId: null,
     }));
 
   const setFromDate = (v: string) =>
@@ -385,10 +434,7 @@ export function useBookingForm() {
     }));
 
   const setToDate = (v: string) =>
-    setForm((f) => ({
-      ...f,
-      toDate: v,
-    }));
+    setForm((f) => ({ ...f, toDate: v }));
 
   const togglePreference = (key: PreferenceKey) =>
     setForm((f) => ({
@@ -399,12 +445,9 @@ export function useBookingForm() {
     }));
 
   const clearAll = () =>
-    setForm((f) => ({
-      ...f,
-      preferences: [],
-    }));
+    setForm((f) => ({ ...f, preferences: [] }));
 
-  // ── Step 1 → Step 2: load seats ────────────────────────────────────────────
+  // ── Step 1 → Step 2: load seats ──────────────────────────────────────────
 
   const findAvailableSeats = useCallback(async () => {
     if (!form.floorId || !form.fromDate || !form.toDate) return;
@@ -429,20 +472,17 @@ export function useBookingForm() {
     }
   }, [form]);
 
-  // ── Step 2: select seat ────────────────────────────────────────────────────
+  // ── Step 2: select seat ──────────────────────────────────────────────────
 
   const selectSeat = (seatId: string) =>
-    setForm((f) => ({
-      ...f,
-      selectedSeatId: seatId,
-    }));
+    setForm((f) => ({ ...f, selectedSeatId: seatId }));
 
   const goToReview = () => {
     if (!form.selectedSeatId) return;
     setStep(3);
   };
 
-  // ── Step 3: confirm booking ────────────────────────────────────────────────
+  // ── Step 3: confirm booking ──────────────────────────────────────────────
 
   const confirmBooking = useCallback(async () => {
     if (!form.selectedSeatId) return;
@@ -464,51 +504,40 @@ export function useBookingForm() {
       setConfirmation(result);
     } catch (e: unknown) {
       setError(
-        e instanceof Error
-          ? e.message
-          : "Booking failed. Please try again."
+        e instanceof Error ? e.message : "Booking failed. Please try again."
       );
     } finally {
       setSubmitting(false);
     }
   }, [form]);
 
-  // ── Navigation helpers ─────────────────────────────────────────────────────
+  // ── Navigation helpers ───────────────────────────────────────────────────
 
   const goBack = () =>
     setStep((s) => (s > 1 ? ((s - 1) as BookingStep) : s));
 
   const resetForm = () => {
     setForm(DEFAULT_STATE);
+    setBuildings([]);
+    setFloors([]);
     setSeats([]);
     setConfirmation(null);
     setError(null);
     setStep(1);
   };
 
-  // ── Derived ────────────────────────────────────────────────────────────────
+  // ── Derived ──────────────────────────────────────────────────────────────
 
   const selectedSite = sites.find((s) => s.id === form.siteId);
-
-  const selectedBuilding = buildings.find(
-    (b) => b.id === form.buildingId
-  );
-
-  const selectedFloor = floors.find(
-    (f) => f.id === form.floorId
-  );
-
-  const selectedSeat = seats.find(
-    (s) => s.id === form.selectedSeatId
-  );
+  const selectedBuilding = buildings.find((b) => b.id === form.buildingId);
+  const selectedFloor = floors.find((f) => f.id === form.floorId);
+  const selectedSeat = seats.find((s) => s.id === form.selectedSeatId);
 
   const dayCount = (() => {
     if (!form.fromDate || !form.toDate) return 0;
-
     const diff =
       new Date(form.toDate + "T00:00:00").getTime() -
       new Date(form.fromDate + "T00:00:00").getTime();
-
     return Math.round(diff / 86_400_000) + 1;
   })();
 
@@ -520,7 +549,6 @@ export function useBookingForm() {
     !!form.toDate;
 
   return {
-    // state
     step,
     form,
     sites,
@@ -529,23 +557,17 @@ export function useBookingForm() {
     seats,
     confirmation,
     error,
-
-    // loading flags
     loadingSites,
     loadingBuildings,
     loadingFloors,
     loadingSeats,
     submitting,
-
-    // derived
     selectedSite,
     selectedBuilding,
     selectedFloor,
     selectedSeat,
     dayCount,
     step1Valid,
-
-    // actions
     setSiteId,
     setBuildingId,
     setFloorId,
@@ -561,4 +583,3 @@ export function useBookingForm() {
     resetForm,
   };
 }
-

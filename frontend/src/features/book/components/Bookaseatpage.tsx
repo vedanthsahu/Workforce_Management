@@ -21,6 +21,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -206,6 +207,30 @@ const BookASeatPage: React.FC = () => {
 
   const todayIso = new Date().toISOString().slice(0, 10);
 
+  // ── Derived display labels for dropdowns ──────────────────────────────────
+  // const selectedSiteLabel = React.useMemo(() => {
+  //   if (!form.siteId) return undefined;
+  //   const s = sites.find((x) => x.id === form.siteId);
+  //   if (!s) return form.siteId;
+  //   return [s.name, s.city, s.country].filter(Boolean).join(" — ");
+  // }, [form.siteId, sites]);
+
+  const selectedSiteLabel = React.useMemo(() => {
+  if (!form.siteId) return undefined;
+  const s = sites.find((x) => x.id === form.siteId);
+  return s?.name ?? form.siteId;  // ← only s.name, not the full joined string
+}, [form.siteId, sites]);
+
+  const selectedBuildingLabel = React.useMemo(() => {
+    if (!form.buildingId) return undefined;
+    return buildings.find((x) => x.id === form.buildingId)?.name ?? form.buildingId;
+  }, [form.buildingId, buildings]);
+
+  const selectedFloorLabel = React.useMemo(() => {
+    if (!form.floorId) return undefined;
+    return floors.find((x) => x.id === form.floorId)?.name ?? form.floorId;
+  }, [form.floorId, floors]);
+
   return (
     <SidebarProvider>
       <div className="flex h-screen bg-[#F7F8FC] font-sans overflow-hidden w-full">
@@ -296,20 +321,20 @@ const BookASeatPage: React.FC = () => {
                   subtitle="Choose your office location, building and floor"
                 />
                 <div className="grid grid-cols-3 gap-4">
+
                   {/* Site */}
                   <div>
                     <p className="text-[11px] font-medium text-gray-500 mb-1.5">Site (Office Location)</p>
                     <Select value={form.siteId} onValueChange={setSiteId} disabled={loadingSites}>
-                      <SelectTrigger className="h-10 text-[13px] border-[#EBEBF5]">
-                        <SelectValue placeholder={loadingSites ? "Loading…" : "Select site"} />
+                      <SelectTrigger className="h-10 text-[13px] border-[#EBEBF5] w-full">
+                        <SelectValue placeholder={loadingSites ? "Loading…" : "Select site"}>
+                          {selectedSiteLabel}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {sites.map((s) => (
                           <SelectItem key={s.id} value={s.id}>
-                            <div>
-                              <p className="text-[13px] font-medium">{s.name}</p>
-                              <p className="text-[11px] text-gray-400">{s.city}, {s.country} · {s.timezone}</p>
-                            </div>
+                            {[s.name].filter(Boolean).join(" — ")}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -324,12 +349,16 @@ const BookASeatPage: React.FC = () => {
                       onValueChange={setBuildingId}
                       disabled={!form.siteId || loadingBuildings}
                     >
-                      <SelectTrigger className="h-10 text-[13px] border-[#EBEBF5]">
-                        <SelectValue placeholder={loadingBuildings ? "Loading…" : "Select building"} />
+                      <SelectTrigger className="h-10 text-[13px] border-[#EBEBF5] w-full">
+                        <SelectValue placeholder={loadingBuildings ? "Loading…" : "Select building"}>
+                          {selectedBuildingLabel}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {buildings.map((b) => (
-                          <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                          <SelectItem key={b.id} value={b.id}>
+                            {b.name}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -343,16 +372,21 @@ const BookASeatPage: React.FC = () => {
                       onValueChange={setFloorId}
                       disabled={!form.buildingId || loadingFloors}
                     >
-                      <SelectTrigger className="h-10 text-[13px] border-[#EBEBF5]">
-                        <SelectValue placeholder={loadingFloors ? "Loading…" : "Select floor"} />
+                      <SelectTrigger className="h-10 text-[13px] border-[#EBEBF5] w-full">
+                        <SelectValue placeholder={loadingFloors ? "Loading…" : "Select floor"}>
+                          {selectedFloorLabel}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {floors.map((f) => (
-                          <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                          <SelectItem key={f.id} value={f.id}>
+                            {f.name}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
+
                 </div>
               </section>
 
