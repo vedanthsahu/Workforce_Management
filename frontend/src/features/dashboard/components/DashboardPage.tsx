@@ -135,7 +135,7 @@ function HeroBanner({
 }
 
 // ─── Week Strip ───────────────────────────────────────────────────────────────
-function WeekStrip({ days, onDayClick }: { days: WeekDay[]; onDayClick?: (day: WeekDay) => void }) {
+function WeekStrip({ days }: { days: WeekDay[] }) {
   const todayIdx = days.findIndex((d) => d.isToday);
 
   return (
@@ -145,7 +145,7 @@ function WeekStrip({ days, onDayClick }: { days: WeekDay[]; onDayClick?: (day: W
         return (
           <div
             key={`${day.dayLabel}-${day.date}`}
-            onClick={() => onDayClick?.(day)}
+           
             className={cn(
               "flex flex-col items-center justify-center flex-1 min-w-[44px] h-[64px] rounded-xl cursor-pointer transition-all duration-200 select-none gap-1 border-2 hover:scale-[1.04] active:scale-[0.97]",
               day.isToday
@@ -557,10 +557,10 @@ export default function DashboardPage() {
     }
   };
 
-  const handleDayClick = (day: WeekDay) => {
-    // Navigate to book page with the date pre-selected
-    router.push(`/book`);
-  };
+  // const handleDayClick = (day: WeekDay) => {
+  //   // Navigate to book page with the date pre-selected
+  //   router.push(`/book`);
+  // };
 
   const handleQuickBook = () => {
     if (data?.favouriteSeat) {
@@ -635,7 +635,7 @@ export default function DashboardPage() {
 
               <WeekStrip
                 days={data.weekDays}
-                onDayClick={handleDayClick}
+           
               />
 
               <StatCards

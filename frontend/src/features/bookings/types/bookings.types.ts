@@ -26,13 +26,13 @@ export interface Booking {
 }
 
 export interface BookingSummary {
-  upcomingCount: number;
-  nextBookingDate: string | null; // "Next: Apr 17 · B-04"
+  upcomingCount:      number;
+  nextBookingDate:    string | null;
   completedThisMonth: number;
-  daysInOffice: number;
-  recurringCount: number;
-  recurringPattern: string | null; // "Every Tue & Thu"
+  daysInOffice:       number;
+  teamInOffice:       number;   // replaces recurringCount / recurringPattern
 }
+ 
 
 export interface BookingsState {
   bookings: Booking[];
