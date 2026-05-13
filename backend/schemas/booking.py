@@ -43,12 +43,10 @@ class BookingResponse(BaseModel):
     booking_date: date
     booking_status: str
     source_channel: str | None = None
-    check_in_at: datetime | None = None
-    checked_out_at: datetime | None = None
     cancelled_at: datetime | None = None
     cancellation_reason: str | None = None
     created_at: datetime | None = None
-    updated_at: datetime | None = None
+
 
 
 class AvailableSeatResponse(BaseModel):

@@ -7,6 +7,7 @@ from typing import Any, Annotated
 import psycopg2
 from fastapi import Depends, HTTPException, Request, Response, status
 from psycopg2.extensions import connection as PGConnection
+from fastapi import HTTPException, status
 
 from backend.core.config import get_settings
 from backend.core.security import (
@@ -23,24 +24,13 @@ from backend.core.security import (
 from backend.db.connection import get_db
 from backend.repositories.user_repository import fetch_user_by_id
 from backend.services.auth_service import AuthTokens, refresh_auth_tokens
+from backend.core.permissions import resolve_permissions
 
 def get_auth_context(
     request: Request,
     response: Response,
     conn: Annotated[PGConnection, Depends(get_db)],
 ) -> dict[str, Any]:
-    """Resolve authenticated claims from a backend-issued access token."""
-    bearer_token = _extract_bearer_token(request)
-    if bearer_token and is_microsoft_token(bearer_token):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "code": "microsoft_token_not_accepted",
-                "message": "Microsoft access tokens are not accepted by backend APIs. Use the backend-issued access token.",
-            },
-        )
-
-    token = request.cookies.get(ACCESS_TOKEN_COOKIE_NAME) or bearer_token
     """Resolve authenticated claims from a backend-issued access token."""
     bearer_token = _extract_bearer_token(request)
     if bearer_token and is_microsoft_token(bearer_token):
@@ -107,7 +97,6 @@ def get_auth_context(
         ) from exc
 
     claims = _parse_auth_claims(token_payload)
-    claims = _parse_auth_claims(token_payload)
     request.state.auth_claims = claims
     return {
         "claims": claims,
@@ -145,6 +134,9 @@ def get_current_user(
                 "message": "Authenticated user no longer exists.",
             },
         )
+    
+    permissions = resolve_permissions(user.get("role"))
+    user["permissions"] = permissions
 
     request.state.current_user = user
     return user
@@ -189,56 +181,6 @@ def _parse_auth_claims(token_payload: dict[str, Any]) -> dict[str, Any]:
 
     return claims
 
-
-def _extract_bearer_token(request: Request) -> str | None:
-    authorization = str(request.headers.get("authorization") or "").strip()
-    if not authorization:
-        return None
-
-    scheme, _, credentials = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not credentials.strip():
-        return None
-    return credentials.strip()
-
-
-def _parse_auth_claims(token_payload: dict[str, Any]) -> dict[str, Any]:
-    subject = str(token_payload.get("user_id") or token_payload.get("sub") or "").strip()
-    email = str(token_payload.get("email") or "").strip().lower()
-    tenant_id = str(token_payload.get("tenant_id") or "").strip()
-    session_id = str(token_payload.get("session_id") or "").strip()
-
-    if not subject:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "code": "invalid_access_token",
-                "message": "Access token is missing the 'user_id' claim.",
-            },
-        )
-    if not tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "code": "invalid_access_token",
-                "message": "Access token is missing the 'tenant_id' claim.",
-            },
-        )
-
-    claims = {
-        "user_id": subject,
-        "sub": subject,
-        "tenant_id": tenant_id,
-    }
-    if email:
-        claims["email"] = email
-    if session_id:
-        claims["session_id"] = session_id
-
-    role = token_payload.get("role")
-    if role is not None:
-        claims["role"] = str(role)
-
-    return claims
 
 
 def _extract_bearer_token(request: Request) -> str | None:
@@ -296,3 +238,22 @@ def _access_token_ttl_seconds() -> int:
 
 def _refresh_token_ttl_seconds() -> int:
     return get_settings().jwt_refresh_token_ttl
+def require_permission(permission: str):
+    def dependency(
+        current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    ) -> dict[str, Any]:
+
+        permissions = current_user.get("permissions", [])
+
+        if permission not in permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "insufficient_permissions",
+                    "message": f"Missing required permission: {permission}",
+                },
+            )
+
+        return current_user
+
+    return dependency

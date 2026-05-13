@@ -11,7 +11,7 @@ from psycopg2.extensions import connection as PGConnection
 from backend.api.deps import get_current_user
 from backend.db.connection import get_db
 from backend.schemas.booking import AvailableSeatResponse, BookingResponse, CreateBookingRequest, CancelBookingRequest, ModifyBookingRequest
-from backend.services.booking_service import book_seat, get_available_seats, get_user_past_bookings,get_user_current_bookings,get_user_future_bookings, cancel_booking_by_id, modify_booking
+from backend.services.booking_service import book_seat, get_available_seats, get_user_past_bookings,get_user_current_bookings,get_user_cancelled_bookings,get_user_future_bookings, cancel_booking_by_id, modify_booking
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -38,6 +38,13 @@ def fetch_my_bookings(
     conn: Annotated[PGConnection, Depends(get_db)],
 ) -> list[BookingResponse]:
     return get_user_current_bookings(conn, current_user=current_user)
+
+@router.get("/me/cancelled", response_model=list[BookingResponse])
+def fetch_my_bookings(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    conn: Annotated[PGConnection, Depends(get_db)],
+) -> list[BookingResponse]:
+    return get_user_cancelled_bookings(conn, current_user=current_user)
 
 @router.get("/me/future", response_model=list[BookingResponse])
 def fetch_my_bookings(
