@@ -361,6 +361,60 @@ def fetch_current_bookings_for_user(
         rows = cur.fetchall()
     return [dict(row) for row in rows]
 
+def fetch_cancelled_bookings_for_user(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    """Fetch bookings for one user within one tenant."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+                b.id::text AS booking_id,
+                b.tenant_id::text AS tenant_id,
+                b.user_id::text AS user_id,
+                b.seat_id::text AS seat_id,
+                b.site_id::text AS site_id,
+                b.building_id::text AS building_id,
+                b.floor_id::text AS floor_id,
+                s.seat_code,
+                si.site_name,
+                bu.building_name,
+                f.floor_name,
+                b.booking_date,
+                b.booking_status,
+                b.source_channel,
+                b.check_in_at,
+                b.checked_out_at,
+                b.cancelled_at,
+                b.cancellation_reason,
+                b.created_at,
+                b.updated_at
+            FROM bookings AS b
+            JOIN seats AS s
+                ON b.seat_id = s.id
+               AND b.tenant_id = s.tenant_id
+            JOIN floors AS f
+                ON b.floor_id = f.id
+               AND b.tenant_id = f.tenant_id
+            JOIN buildings AS bu
+                ON b.building_id = bu.id
+               AND b.tenant_id = bu.tenant_id
+            JOIN sites AS si
+                ON b.site_id = si.id
+               AND b.tenant_id = si.tenant_id
+            WHERE b.user_id = %s
+              AND b.tenant_id = %s
+              AND b.booking_status = 'CANCELLED'
+            ORDER BY b.booking_date DESC
+            """,
+            (user_id, tenant_id),
+        )
+        rows = cur.fetchall()
+    return [dict(row) for row in rows]
+
 def fetch_future_bookings_for_user(
     conn: PGConnection,
     *,
