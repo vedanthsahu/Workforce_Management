@@ -179,6 +179,9 @@ def fetch_booking_by_id(
         )
         row = cur.fetchone()
     return dict(row) if row else None
+
+
+
 def fetch_booking_by_id_for_update(
     conn: PGConnection,
     *,
@@ -212,6 +215,8 @@ def fetch_booking_by_id_for_update(
         row = cur.fetchone()
 
     return dict(row) if row else None
+
+
 def cancel_booking(
     conn: PGConnection,
     *,
