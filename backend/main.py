@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from backend.api.routes.dashboard import router as dashboard_router
 from backend.api.routes.auth import router as auth_router
 from backend.api.routes.bookings import router as bookings_router
 from backend.api.routes.locations import router as locations_router
@@ -50,6 +51,7 @@ app.include_router(sso_router)
 app.include_router(bookings_router)
 app.include_router(locations_router)
 app.include_router(teams.router)
+app.include_router(dashboard_router)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:

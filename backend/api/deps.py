@@ -23,10 +23,6 @@ from backend.core.security import (
 from backend.db.connection import get_db
 from backend.repositories.user_repository import fetch_user_by_id
 from backend.services.auth_service import AuthTokens, refresh_auth_tokens
-from backend.repositories.user_repository import (
-    fetch_days_in_office,
-    fetch_favorite_seat,
-)
 
 def get_auth_context(
     request: Request,
@@ -132,20 +128,6 @@ def get_current_user(
 
     try:
         user = fetch_user_by_id(conn, tenant_id=tenant_id, user_id=user_id)
-        favorite_seat = fetch_favorite_seat(
-            conn,
-            tenant_id=tenant_id,
-            user_id=user_id,
-        )
-
-        days_in_office = fetch_days_in_office(
-            conn,
-            tenant_id=tenant_id,
-            user_id=user_id,
-        )
-
-        user["favorite_seat"] = favorite_seat
-        user["days_in_office"] = days_in_office
     except psycopg2.Error as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

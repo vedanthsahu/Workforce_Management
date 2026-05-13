@@ -16,6 +16,15 @@ class CreateBookingRequest(BaseModel):
     seat_id: int = Field(gt=0)
     booking_date: date
 
+class CancelBookingRequest(BaseModel):
+    cancellation_reason: str | None = None
+
+class ModifyBookingRequest(BaseModel):
+    site_id: int = Field(gt=0)
+    building_id: int = Field(gt=0)
+    floor_id: int = Field(gt=0)
+    seat_id: int = Field(gt=0)
+    booking_date: date    
 
 class BookingResponse(BaseModel):
     """Public representation of a booking returned by the API."""

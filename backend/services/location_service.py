@@ -8,7 +8,7 @@ from psycopg2.extensions import connection as PGConnection
 
 from backend.repositories.location_repository import (
     fetch_buildings_by_site,
-    fetch_floors_by_site,
+    fetch_floors_by_building,
     fetch_seats_by_floor,
     fetch_sites,
 )
@@ -52,15 +52,15 @@ def get_buildings_by_site(
     return [BuildingResponse(**building) for building in buildings]
 
 
-def get_floors_by_site(
+def get_floors_by_building(
     conn: PGConnection,
     *,
     tenant_id: str,
-    site_id: str,
+    building_id: str,
 ) -> list[FloorResponse]:
     """Return tenant-scoped floors for one site through the full hierarchy."""
     try:
-        floors = fetch_floors_by_site(conn, tenant_id=tenant_id, site_id=site_id)
+        floors = fetch_floors_by_building(conn, tenant_id=tenant_id, building_id=building_id)
     except psycopg2.Error as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

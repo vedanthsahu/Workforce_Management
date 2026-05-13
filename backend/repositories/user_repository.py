@@ -586,3 +586,125 @@ def fetch_days_in_office(
         )
         row = cur.fetchone()
     return int(row[0]) if row else 0
+def fetch_days_in_office_current_month(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    user_id: str,
+) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT booking_date)
+            FROM bookings
+            WHERE tenant_id = %s
+              AND user_id = %s
+              AND booking_status IN ('CONFIRMED', 'CHECKED_IN', 'COMPLETED')
+              AND booking_date <= CURRENT_DATE
+              AND DATE_TRUNC('month', booking_date)
+                    = DATE_TRUNC('month', CURRENT_DATE)
+            """,
+            (tenant_id, user_id),
+        )
+
+        row = cur.fetchone()
+
+    return int(row[0]) if row else 0
+def fetch_days_in_office_current_year(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    user_id: str,
+) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT booking_date)
+            FROM bookings
+            WHERE tenant_id = %s
+              AND user_id = %s
+              AND booking_status IN ('CONFIRMED', 'CHECKED_IN', 'COMPLETED')
+              AND booking_date <= CURRENT_DATE
+              AND DATE_TRUNC('year', booking_date)
+                    = DATE_TRUNC('year', CURRENT_DATE)
+            """,
+            (tenant_id, user_id),
+        )
+
+        row = cur.fetchone()
+
+    return int(row[0]) if row else 0
+def fetch_team_rank_current_year(
+    conn: PGConnection,
+    *,
+    tenant_id: str,
+    user_id: str,
+) -> dict[str, int | None]:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            WITH primary_team AS (
+                SELECT MIN(tm.team_id) AS team_id
+                FROM team_members tm
+                WHERE tm.tenant_id = %s
+                  AND tm.user_id = %s
+            ),
+            yearly_counts AS (
+                SELECT
+                    tm.user_id::text AS user_id,
+                    COUNT(DISTINCT b.booking_date) AS office_days
+                FROM team_members tm
+                CROSS JOIN primary_team pt
+                LEFT JOIN bookings b
+                    ON b.user_id = tm.user_id
+                   AND b.tenant_id = tm.tenant_id
+                   AND b.booking_status IN (
+                        'CONFIRMED',
+                        'CHECKED_IN',
+                        'COMPLETED'
+                   )
+                   AND b.booking_date <= CURRENT_DATE
+                   AND DATE_TRUNC('year', b.booking_date)
+                        = DATE_TRUNC('year', CURRENT_DATE)
+                WHERE tm.tenant_id = %s
+                  AND tm.team_id = pt.team_id
+                GROUP BY tm.user_id
+            ),
+            ranked AS (
+                SELECT
+                    user_id,
+                    office_days,
+                    RANK() OVER (
+                        ORDER BY office_days DESC
+                    ) AS team_rank
+                FROM yearly_counts
+            )
+            SELECT
+                team_rank,
+                (
+                    SELECT COUNT(*)
+                    FROM yearly_counts
+                ) AS team_member_count
+            FROM ranked
+            WHERE user_id = %s
+            """,
+            (
+                tenant_id,
+                user_id,
+                tenant_id,
+                user_id,
+            ),
+        )
+
+        row = cur.fetchone()
+
+    if row is None:
+        return {
+            "team_rank_current_year": None,
+            "team_member_count": 0,
+        }
+
+    return {
+        "team_rank_current_year": int(row["team_rank"]),
+        "team_member_count": int(row["team_member_count"]),
+    }

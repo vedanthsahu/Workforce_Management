@@ -20,9 +20,7 @@ class UserResponse(BaseModel):
 
     user_id: str
     tenant_id: str
-    external_user_id: str | None = None
     tenant_id: str
-    external_user_id: str | None = None
     email: str
     full_name: str | None = None
     display_name: str | None = None
@@ -49,7 +47,6 @@ class UserResponse(BaseModel):
     company_name: str | None = None
     employee_id: str | None = None
     manager_user_id: str | None = None
-    home_site_id: str | None = None
     role: str | None = None
     status: str | None = None
     graph_last_synced_at: datetime | None = None
@@ -57,8 +54,6 @@ class UserResponse(BaseModel):
     graph_last_synced_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
-    favorite_seat: FavoriteSeatResponse | None = None
-    days_in_office: int = 0
 
     @model_validator(mode="before")
     @classmethod
