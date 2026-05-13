@@ -39,7 +39,7 @@ class FloorResponse(BaseModel):
     building_name: str | None = None
     floor_code: str | None = None
     floor_name: str | None = None
-    status: str | None = None
+    # status: str | None = None
 
 
 class SeatResponse(BaseModel):

@@ -89,6 +89,8 @@ def insert_booking(
             INSERT INTO bookings (
                 tenant_id,
                 user_id,
+                booked_for_user_id,
+                booked_by_user_id,
                 seat_id,
                 site_id,
                 building_id,
@@ -97,11 +99,13 @@ def insert_booking(
                 booking_status,
                 source_channel
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'CONFIRMED', %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'CONFIRMED', %s)
             RETURNING id::text AS booking_id
             """,
             (
                 tenant_id,
+                user_id,
+                user_id,
                 user_id,
                 seat["seat_id"],
                 seat["site_id"],

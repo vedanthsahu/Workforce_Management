@@ -66,13 +66,13 @@ def fetch_buildings_by_site(
     return [dict(row) for row in rows]
 
 
-def fetch_floors_by_site(
+def fetch_floors_by_building(
     conn: PGConnection,
     *,
     tenant_id: str,
-    site_id: str,
+    building_id: str,
 ) -> list[dict[str, Any]]:
-    """Fetch floors under all buildings for one tenant-scoped site."""
+    """Fetch floors under given building for one tenant-scoped site."""
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
@@ -90,11 +90,12 @@ def fetch_floors_by_site(
                 ON f.building_id = b.id
                AND f.tenant_id = b.tenant_id
                AND f.site_id = b.site_id
-            WHERE b.site_id = %s
+            WHERE b.id = %s
               AND f.tenant_id = %s
+              AND b.status = %s
             ORDER BY b.building_code, f.floor_code, f.id
             """,
-            (site_id, tenant_id),
+            (building_id, tenant_id,"ACTIVE"),
         )
         rows = cur.fetchall()
     return [dict(row) for row in rows]
@@ -136,6 +137,7 @@ def fetch_seats_by_floor(
                AND b.tenant_id = si.tenant_id
             WHERE s.tenant_id = %s
               AND s.floor_id = %s
+              AND s.status = 'ACTIVE'
             ORDER BY s.seat_code, s.id
             """,
             (tenant_id, floor_id),
