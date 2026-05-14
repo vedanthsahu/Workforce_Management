@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState } from "react";
@@ -181,19 +182,22 @@ const CalIcon = () => (
     <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" />
   </svg>
 );
+
 const CheckIcon = () => (
   <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
     <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
-const RepeatIcon = () => (
+
+const UsersIcon = () => (
   <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-    <path d="M17 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M3 11V9a4 4 0 014-4h14" strokeLinecap="round" />
-    <path d="M7 22l-4-4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M21 13v2a4 4 0 01-4 4H3" strokeLinecap="round" />
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M23 21v-2a4 4 0 0 0-3-3.87" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M16 3.13a4 4 0 0 1 0 7.75" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
+
 const RefreshIcon = () => (
   <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
     <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
@@ -270,11 +274,15 @@ const MyBookingsPage: React.FC = () => {
               accentClass="border-l-emerald-400"
             />
             <StatCard
-              label="Recurring bookings"
-              value={summary.recurringCount}
-              subLabel={summary.recurringPattern ?? undefined}
-              icon={<RepeatIcon />}
-              accentClass="border-l-amber-400"
+              label="Team in office today"
+              value={summary.teamInOffice ?? 0}
+              subLabel={
+                (summary.teamInOffice ?? 0) === 1
+                  ? "1 teammate present"
+                  : `${summary.teamInOffice ?? 0} teammates present`
+              }
+              icon={<UsersIcon />}
+              accentClass="border-l-violet-400"
             />
           </div>
 

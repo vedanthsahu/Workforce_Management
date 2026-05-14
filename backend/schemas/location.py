@@ -13,10 +13,7 @@ class SiteResponse(BaseModel):
     site_name: str
     city: str | None = None
     country: str | None = None
-    timezone: str | None = None
-    address_line1: str | None = None
-    address_line2: str | None = None
-    status: str | None = None
+  
 
 
 class BuildingResponse(BaseModel):
@@ -26,7 +23,6 @@ class BuildingResponse(BaseModel):
     site_id: str
     building_code: str
     building_name: str
-    status: str | None = None
 
 
 class FloorResponse(BaseModel):
@@ -39,7 +35,6 @@ class FloorResponse(BaseModel):
     building_name: str | None = None
     floor_code: str | None = None
     floor_name: str | None = None
-    status: str | None = None
 
 
 class SeatResponse(BaseModel):

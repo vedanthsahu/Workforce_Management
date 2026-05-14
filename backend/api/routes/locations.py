@@ -12,7 +12,7 @@ from backend.db.connection import get_db
 from backend.schemas.location import BuildingResponse, FloorResponse, SeatResponse, SiteResponse
 from backend.services.location_service import (
     get_buildings_by_site,
-    get_floors_by_site,
+    get_floors_by_building,
     get_seats_by_floor,
     get_sites,
 )
@@ -41,16 +41,16 @@ def buildings(
     )
 
 
-@router.get("/offices/{office_id}/floors", response_model=list[FloorResponse])
+@router.get("/buildings/{building_id}/floors", response_model=list[FloorResponse])
 def floors_by_office(
-    site_id: Annotated[int, Path(alias="office_id", gt=0)],
+    building_id: Annotated[int, Path(alias="building_id", gt=0)],
     current_user: Annotated[dict[str, Any], Depends(get_current_user)],
     conn: Annotated[PGConnection, Depends(get_db)],
 ) -> list[FloorResponse]:
-    return get_floors_by_site(
+    return get_floors_by_building(
         conn,
         tenant_id=str(current_user["tenant_id"]),
-        site_id=str(site_id),
+        building_id=str(building_id),
     )
 
 

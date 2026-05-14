@@ -1,5 +1,6 @@
 import { axiosInstance } from "@/lib/http/axios";
 import { Booking, BookingSummary, RawBooking } from "../types/bookings.types";
+import type { ApiTeamGroup } from "@/features/dashboard/types/dashboard.types";
 
 const BASE = "/bookings";
 
@@ -75,11 +76,68 @@ export async function cancelBooking(bookingId: string): Promise<void> {
   await axiosInstance.delete(`${BASE}/${bookingId}`);
 }
 
+// ── Team fetch ────────────────────────────────────────────────────────────────
+
+export async function fetchCurrentUser() {
+  const { data } = await axiosInstance.get("/auth/me");
+  return data;
+}
+
+export async function fetchTeamGroups(): Promise<ApiTeamGroup[]> {
+  const { data } = await axiosInstance.get<ApiTeamGroup[]>("/teams/me");
+  return data;
+}
+
+// ── Summary aggregation ───────────────────────────────────────────────────────
+// export function deriveBookingSummary(
+//   current: Booking[],
+//   future: Booking[],
+//   past: Booking[],
+//   teamGroups: ApiTeamGroup[] = [],
+//   currentUserId: string = "",
+// ): BookingSummary {
+//   const upcoming = [...current, ...future];
+//   const nextBooking = upcoming[0];
+
+//   const nextBookingDate = nextBooking
+//     ? (() => {
+//         const d = new Date(nextBooking.date);
+//         const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+//         return `Next: ${label} · ${nextBooking.seat}`;
+//       })()
+//     : null;
+
+//   const now = new Date();
+//   const completedThisMonth = past.filter((b) => {
+//     const d = new Date(b.date);
+//     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+//   }).length;
+
+//   // Count teammates in office today, excluding the current user.
+//   // Each group's members list is used to check whether the current user
+//   // is present and booked today — if so, subtract 1 from that group's count.
+//   const teamInOffice = teamGroups.reduce((acc, g) => {
+//     const selfInGroup = g.members.some(
+//       (m) => m.user_id === currentUserId && m.seat != null,
+//     );
+//     return acc + (g.booked_today_count ?? 0) - (selfInGroup ? 1 : 0);
+//   }, 0);
+
+//   return {
+//     upcomingCount:    upcoming.length,
+//     nextBookingDate,
+//     completedThisMonth,
+//     daysInOffice:     completedThisMonth,
+//     teamInOffice,
+//   };
+// }
 // ── Summary aggregation ───────────────────────────────────────────────────────
 export function deriveBookingSummary(
   current: Booking[],
   future: Booking[],
-  past: Booking[]
+  past: Booking[],
+  teamGroups: ApiTeamGroup[] = [],
+  currentUserId: string = "",
 ): BookingSummary {
   const upcoming = [...current, ...future];
   const nextBooking = upcoming[0];
@@ -98,16 +156,18 @@ export function deriveBookingSummary(
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   }).length;
 
-  const recurring = upcoming.filter((b) => b.isRecurring);
-  const recurringPattern =
-    recurring.length > 0 ? (recurring[0].recurringPattern ?? null) : null;
+  //  Exact same logic as deriveStats in dashboard.service.ts
+  const teamInOffice = teamGroups.reduce((acc, g) => {
+    const selfMember = g.members.find((m) => m.user_id === currentUserId);
+    const selfBookedToday = selfMember?.seat != null;
+    return acc + g.booked_today_count - (selfBookedToday ? 1 : 0);
+  }, 0);
 
   return {
-    upcomingCount:       upcoming.length,
+    upcomingCount:    upcoming.length,
     nextBookingDate,
     completedThisMonth,
-    daysInOffice:        completedThisMonth,
-    recurringCount:      recurring.length,
-    recurringPattern,
+    daysInOffice:     completedThisMonth,
+    teamInOffice,
   };
 }

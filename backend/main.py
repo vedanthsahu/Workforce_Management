@@ -32,7 +32,7 @@ from backend.repositories.token_repository import (
     purge_expired_sessions,
 )
 from backend.api.routes import teams
-
+from backend.api.routes.preferences import router as preferences_router
 
 settings = get_settings()
 
@@ -52,7 +52,7 @@ app.include_router(bookings_router)
 app.include_router(locations_router)
 app.include_router(teams.router)
 app.include_router(dashboard_router)
-
+app.include_router(preferences_router)
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
     """Convert FastAPI HTTP exceptions into a consistent error envelope.

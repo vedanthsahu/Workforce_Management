@@ -55,12 +55,6 @@ def _build_access_token_for_user(user: dict[str, Any], *, session_id: str) -> st
         "tenant_id": str(user["tenant_id"]),
         "session_id": session_id,
     }
-def _build_access_token_for_user(user: dict[str, Any], *, session_id: str) -> str:
-    extra_claims: dict[str, Any] = {
-        "user_id": str(user["user_id"]),
-        "tenant_id": str(user["tenant_id"]),
-        "session_id": session_id,
-    }
 
     role = str(user.get("role") or "").strip()
     if role:
