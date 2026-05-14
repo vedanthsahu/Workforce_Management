@@ -299,6 +299,7 @@ def fetch_past_bookings_for_user(
                AND b.tenant_id = si.tenant_id
             WHERE b.user_id = %s
               AND b.tenant_id = %s
+              AND b.booking_status = 'CONFIRMED'
               AND b.booking_date < CURRENT_DATE
             ORDER BY b.booking_date DESC
             """,
@@ -353,6 +354,7 @@ def fetch_current_bookings_for_user(
                AND b.tenant_id = si.tenant_id
             WHERE b.user_id = %s
               AND b.tenant_id = %s
+              AND b.booking_status = 'CONFIRMED'
               AND b.booking_date = CURRENT_DATE
             ORDER BY b.booking_date DESC
             """,
@@ -461,6 +463,7 @@ def fetch_future_bookings_for_user(
                AND b.tenant_id = si.tenant_id
             WHERE b.user_id = %s
               AND b.tenant_id = %s
+              AND b.booking_status = 'CONFIRMED'
               AND b.booking_date > CURRENT_DATE
             ORDER BY b.booking_date DESC
             """,

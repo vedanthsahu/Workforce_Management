@@ -1,5 +1,5 @@
 """Database connection helpers for PostgreSQL access.
-
+connections.py
 This module provides the low-level connection context manager used throughout
 the backend and the FastAPI dependency wrapper that yields one connection per
 request scope.

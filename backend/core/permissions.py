@@ -1,3 +1,7 @@
+"""
+Permissions.py to get the role permissions
+"""
+
 from __future__ import annotations
 
 ROLE_PERMISSIONS: dict[str, list[str]] = {
@@ -16,6 +20,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "seat:block",
         "booking:view_all",
         "floor:view",
+        "admin_dashboard:view",
     ],
 
     "TENANT_ADMIN": [
@@ -34,6 +39,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "seat:delete",
         "user:view",
         "user:manage",
+        "admin_dashboard:view",
     ],
 
     "SUPPORT_ADMIN": [
@@ -42,6 +48,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "user:view",
         "tenant:view",
         "support:manage",
+        "admin_dashboard:view",
     ],
 }
 
