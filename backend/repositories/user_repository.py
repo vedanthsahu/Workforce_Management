@@ -1,4 +1,4 @@
-"""Repository helpers for schema-native tenant, user, and Graph identity access."""
+"""user_repository.py Repository helpers for schema-native tenant, user, and Graph identity access."""
 
 from __future__ import annotations
 

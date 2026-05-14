@@ -1,4 +1,4 @@
-"""Shared FastAPI dependencies for authenticated routes."""
+"""Shared FastAPI dependencies for authenticated routes. deps.py"""
 
 from __future__ import annotations
 

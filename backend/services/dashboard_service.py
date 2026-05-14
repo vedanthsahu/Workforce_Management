@@ -1,3 +1,7 @@
+"""
+Employee dashboard service to get the dashboard details for dashboard/me
+"""
+
 from __future__ import annotations
 
 from typing import Any

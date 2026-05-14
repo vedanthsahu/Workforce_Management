@@ -1,3 +1,6 @@
+"""
+Dashboard.py for schema define
+"""
 from __future__ import annotations
 
 from pydantic import BaseModel
