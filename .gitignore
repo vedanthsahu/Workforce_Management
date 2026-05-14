@@ -18,6 +18,7 @@ venv/
 .venv/
 env/
 ENV/
+.env.local
 
 # =========================
 # Environment variables / secrets
@@ -126,3 +127,5 @@ docker-compose.override.yml
 __pycache__/
 *.pyc
 .env
+
+node_modules/

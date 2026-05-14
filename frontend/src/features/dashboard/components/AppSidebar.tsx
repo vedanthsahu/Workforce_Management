@@ -41,6 +41,26 @@ const ROUTE_MAP: Record<string, string> = {
   find:          "/find",
   notifications: "/notifications",
   favourites:    "/favourites",
+
+  //  ADMIN ROUTES--------------------------------
+
+offices: "/admin/offices",
+floors: "/admin/floors",
+layouts: "/admin/layouts",
+seats: "/admin/seats",
+amenities: "/admin/amenities",
+seatstatus: "/admin/seat-status",
+
+bookings: "/admin/bookings",
+users: "/admin/users",
+
+occupancy: "/admin/occupancy",
+utilization: "/admin/utilization",
+audit: "/admin/audit",
+
+settings: "/admin/settings", // Admin settings page  13/05 chandana
+  
+
 };
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
@@ -51,6 +71,7 @@ const MAIN_NAV = [
   { id: "mybookings", label: "My bookings",      icon: BookOpen,   badge: 3,     badgeRed: true },
   { id: "team",       label: "Book for someone", icon: Monitor,    badge: "New", badgeGreen: true },
   { id: "schedule",   label: "My schedule",      icon: CalendarCheck },
+
 ];
 
 const OFFICE_NAV = [
@@ -61,6 +82,33 @@ const PERSONAL_NAV = [
   { id: "notifications", label: "Notifications", icon: Bell, badge: 2, badgeRed: true },
   { id: "favourites",    label: "Preferences",   icon: Star },
 ];
+
+
+// ADMIN NAV CONFIG-------------------------------------------------------------------
+
+const ADMIN_NAV = {
+  manage: [
+    { id: "offices", label: "Offices", icon: Monitor },
+    { id: "floors", label: "Floors", icon: Monitor },
+    { id: "layouts", label: "Floor Layouts", icon: Monitor },
+    { id: "seats", label: "Seats", icon: Monitor },
+    { id: "amenities", label: "Amenities", icon: Monitor },
+    { id: "seatstatus", label: "Seat Status", icon: Monitor },
+  ],
+  operations: [
+    { id: "bookings", label: "Bookings", icon: CalendarDays },
+    { id: "users", label: "Users", icon: Monitor },
+    { id: "notifications", label: "Notifications", icon: Bell },
+  ],
+  reports: [
+    { id: "occupancy", label: "Occupancy", icon: LayoutDashboard },
+    { id: "utilization", label: "Utilization", icon: LayoutDashboard },
+    { id: "audit", label: "Audit Logs", icon: LayoutDashboard },
+  ],
+  settings: [
+    { id: "settings", label: "Settings", icon: Star },
+  ],
+};  // Admin-specific navigation items, organized by category -- 13/05 chandana
 
 // ─── Props — activeItem & onNavigate removed ──────────────────────────────────
 
@@ -182,7 +230,8 @@ function LogoutDialog({
 export function AppSidebar({ user }: AppSidebarProps) {
   const router   = useRouter();
   const pathname = usePathname();                        // ← active state from URL
-
+//  const isAdmin = user?.role === "admin"; //  check for admin role to conditionally render admin-specific items --- 13/5 chandana 
+  const isAdmin = pathname.startsWith("/admin");// This is hardcoded,not from db 
   const [showLogout,  setShowLogout]  = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const { state } = useSidebar();
@@ -236,7 +285,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
         </SidebarHeader>
 
         <SidebarContent>
-          {/* Main */}
+          {/* Main
           <SidebarGroup>
             <SidebarGroupLabel>Main</SidebarGroupLabel>
             <SidebarMenu>
@@ -270,7 +319,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
           </SidebarGroup>
 
           {/* Office */}
-          <SidebarGroup>
+           {/* <SidebarGroup>
             <SidebarGroupLabel>Office</SidebarGroupLabel>
             <SidebarMenu>
               {OFFICE_NAV.map((item) => (
@@ -289,7 +338,7 @@ export function AppSidebar({ user }: AppSidebarProps) {
           </SidebarGroup>
 
           {/* Personal */}
-          <SidebarGroup>
+          {/* <SidebarGroup>
             <SidebarGroupLabel>Personal</SidebarGroupLabel>
             <SidebarMenu>
               {PERSONAL_NAV.map((item) => (
@@ -313,8 +362,159 @@ export function AppSidebar({ user }: AppSidebarProps) {
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
-          </SidebarGroup>
-        </SidebarContent>
+          </SidebarGroup>  */} 
+
+  {isAdmin ? (
+    <>
+      {/* Dashboard */}
+      <SidebarGroup>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={activeItem === "dashboard"}
+              onClick={() => handleNav("dashboard")}
+            >
+              <LayoutDashboard className="w-4 h-4" />
+              <span>Dashboard</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroup>
+
+      {/* MANAGE */}
+      <SidebarGroup>
+        <SidebarGroupLabel>MANAGE</SidebarGroupLabel>
+        <SidebarMenu>
+          {ADMIN_NAV.manage.map((item) => (
+            <SidebarMenuItem key={item.id}>
+              <SidebarMenuButton
+                isActive={activeItem === item.id}
+                onClick={() => handleNav(item.id)}
+              >
+                <item.icon className="w-4 h-4" />
+                <span>{item.label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroup>
+
+      {/* OPERATIONS */}
+      <SidebarGroup>
+        <SidebarGroupLabel>OPERATIONS</SidebarGroupLabel>
+        <SidebarMenu>
+          {ADMIN_NAV.operations.map((item) => (
+            <SidebarMenuItem key={item.id}>
+              <SidebarMenuButton
+                isActive={activeItem === item.id}
+                onClick={() => handleNav(item.id)}
+              >
+                <item.icon className="w-4 h-4" />
+                <span>{item.label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroup>
+
+      {/* REPORTS */}
+      <SidebarGroup>
+        <SidebarGroupLabel>REPORTS</SidebarGroupLabel>
+        <SidebarMenu>
+          {ADMIN_NAV.reports.map((item) => (
+            <SidebarMenuItem key={item.id}>
+              <SidebarMenuButton
+                isActive={activeItem === item.id}
+                onClick={() => handleNav(item.id)}
+              >
+                <item.icon className="w-4 h-4" />
+                <span>{item.label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroup>
+
+      {/* SETTINGS */}
+      <SidebarGroup>
+        <SidebarGroupLabel>SETTINGS</SidebarGroupLabel>
+        <SidebarMenu>
+          {ADMIN_NAV.settings.map((item) => (
+            <SidebarMenuItem key={item.id}>
+              <SidebarMenuButton
+                isActive={activeItem === item.id}
+                onClick={() => handleNav(item.id)}
+              >
+                <item.icon className="w-4 h-4" />
+                <span>{item.label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroup>
+    </>
+  ) : (
+    <>
+      {/* EXISTING EMPLOYEE SIDEBAR */}
+
+      <SidebarGroup>
+        <SidebarGroupLabel>Main</SidebarGroupLabel>
+        <SidebarMenu>
+          {MAIN_NAV.map((item) => (
+            <SidebarMenuItem key={item.id}>
+              <SidebarMenuButton
+                isActive={activeItem === item.id}
+                tooltip={item.label}
+                onClick={() => handleNav(item.id)}
+                className="justify-between"
+              >
+                <div className="flex items-center gap-2.5">
+                  <item.icon className="w-4 h-4" />
+                  <span>{item.label}</span>
+                </div>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroup>
+
+      <SidebarGroup>
+        <SidebarGroupLabel>Office</SidebarGroupLabel>
+        <SidebarMenu>
+          {OFFICE_NAV.map((item) => (
+            <SidebarMenuItem key={item.id}>
+              <SidebarMenuButton
+                isActive={activeItem === item.id}
+                onClick={() => handleNav(item.id)}
+              >
+                <item.icon className="w-4 h-4" />
+                <span>{item.label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroup>
+
+      <SidebarGroup>
+        <SidebarGroupLabel>Personal</SidebarGroupLabel>
+        <SidebarMenu>
+          {PERSONAL_NAV.map((item) => (
+            <SidebarMenuItem key={item.id}>
+              <SidebarMenuButton
+                isActive={activeItem === item.id}
+                onClick={() => handleNav(item.id)}
+              >
+                <item.icon className="w-4 h-4" />
+                <span>{item.label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroup>
+    </>
+  )}
+</SidebarContent>   
+{/* Conditionally render admin or employee navigation groups based on user role */}
 
         {/* User footer */}
         <SidebarFooter className="px-3 py-4 border-t border-sidebar-border">
