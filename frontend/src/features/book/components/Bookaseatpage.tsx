@@ -22,7 +22,6 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -34,13 +33,19 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
 import { useBookingForm } from "../hooks/Usebookingform";
-import { Seat } from "../types/Bookingform.types";
+// Import the SVG floor map component
+import { SvgFloorMapPage, SeatWithSvgId } from "./SvgFloorMapPage";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDate(iso: string): string {
   const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 // ── Preference icon helper ────────────────────────────────────────────────────
@@ -67,12 +72,14 @@ interface StepDotProps {
 
 const StepDot: React.FC<StepDotProps> = ({ number, label, sublabel, active, done }) => (
   <div className="flex items-center gap-3">
-    <div className={cn(
-      "w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 transition-colors",
-      done   ? "bg-indigo-600 text-white" :
-      active ? "bg-indigo-600 text-white" :
-               "border-2 border-gray-300 text-gray-400 bg-white"
-    )}>
+    <div
+      className={cn(
+        "w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 transition-colors",
+        done || active
+          ? "bg-indigo-600 text-white"
+          : "border-2 border-gray-300 text-gray-400 bg-white"
+      )}
+    >
       {done ? <CheckCircle2 size={16} /> : number}
     </div>
     <div>
@@ -84,13 +91,15 @@ const StepDot: React.FC<StepDotProps> = ({ number, label, sublabel, active, done
   </div>
 );
 
-const StepArrow = () => (
-  <ChevronRight size={16} className="text-gray-300 shrink-0" />
-);
+const StepArrow = () => <ChevronRight size={16} className="text-gray-300 shrink-0" />;
 
 // ── Section header ────────────────────────────────────────────────────────────
 
-const SectionHeader: React.FC<{ icon: React.ReactNode; title: string; subtitle: string }> = ({ icon, title, subtitle }) => (
+const SectionHeader: React.FC<{ icon: React.ReactNode; title: string; subtitle: string }> = ({
+  icon,
+  title,
+  subtitle,
+}) => (
   <div className="flex items-center gap-3 mb-5">
     <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
       {icon}
@@ -101,35 +110,6 @@ const SectionHeader: React.FC<{ icon: React.ReactNode; title: string; subtitle: 
     </div>
   </div>
 );
-
-// ── Seat tile (for floor map step) ───────────────────────────────────────────
-
-const SeatTile: React.FC<{ seat: Seat; selected: boolean; onSelect: () => void }> = ({
-  seat, selected, onSelect,
-}) => {
-  const isSelectable = seat.status === "available";
-  return (
-    <button
-      onClick={isSelectable ? onSelect : undefined}
-      disabled={!isSelectable}
-      className={cn(
-        "w-10 h-10 rounded-lg text-[10px] font-semibold flex flex-col items-center justify-center border transition-all duration-150",
-        seat.status === "booked"       && "bg-gray-100 border-gray-200 text-gray-300 cursor-not-allowed",
-        seat.status === "unavailable"  && "bg-red-50 border-red-100 text-red-300 cursor-not-allowed",
-        seat.status === "available" && !selected && !seat.matchesPreferences &&
-          "bg-white border-[#EBEBF5] text-gray-600 hover:border-indigo-300 hover:bg-indigo-50",
-        seat.status === "available" && !selected && seat.matchesPreferences &&
-          "bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100",
-        selected && "bg-indigo-600 border-indigo-600 text-white shadow-md scale-105",
-      )}
-    >
-      <span>{seat.label}</span>
-      {seat.matchesPreferences && !selected && (
-        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-0.5" />
-      )}
-    </button>
-  );
-};
 
 // ── Summary row ───────────────────────────────────────────────────────────────
 
@@ -142,13 +122,19 @@ const SummaryRow: React.FC<{ label: string; value: string }> = ({ label, value }
 
 // ── Date input ────────────────────────────────────────────────────────────────
 
-const DateInput: React.FC<{ label: string; value: string; min?: string; onChange: (v: string) => void }> = ({
-  label, value, min, onChange,
-}) => (
+const DateInput: React.FC<{
+  label: string;
+  value: string;
+  min?: string;
+  onChange: (v: string) => void;
+}> = ({ label, value, min, onChange }) => (
   <div className="flex-1 min-w-0">
     <p className="text-[11px] font-medium text-gray-500 mb-1.5">{label}</p>
     <div className="relative">
-      <CalendarDays size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+      <CalendarDays
+        size={14}
+        className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+      />
       <input
         type="date"
         value={value}
@@ -205,19 +191,12 @@ const BookASeatPage: React.FC = () => {
     loadingPreferences,
   } = useBookingForm();
 
-  // Group seats by row for the floor map
-  const seatRows = seats.reduce<Record<number, Seat[]>>((acc, seat) => {
-    (acc[seat.row] = acc[seat.row] ?? []).push(seat);
-    return acc;
-  }, {});
-
   const todayIso = new Date().toISOString().slice(0, 10);
 
   // ── Derived display labels for dropdowns ──────────────────────────────────
   const selectedSiteLabel = React.useMemo(() => {
     if (!form.siteId) return undefined;
-    const s = sites.find((x) => x.id === form.siteId);
-    return s?.name ?? form.siteId;
+    return sites.find((x) => x.id === form.siteId)?.name ?? form.siteId;
   }, [form.siteId, sites]);
 
   const selectedBuildingLabel = React.useMemo(() => {
@@ -230,6 +209,11 @@ const BookASeatPage: React.FC = () => {
     return floors.find((x) => x.id === form.floorId)?.name ?? form.floorId;
   }, [form.floorId, floors]);
 
+  // ── Cast seats to SeatWithSvgId ───────────────────────────────────────────
+  // The base Seat type should have svgId added (see integration guide in SvgFloorMapPage.tsx).
+  // This cast is safe once you add svgId to the Seat interface in Bookingform.types.ts.
+  const seatsWithSvgId = seats as unknown as SeatWithSvgId[];
+
   return (
     <SidebarProvider>
       <div className="flex h-screen bg-[#F7F8FC] font-sans overflow-hidden w-full">
@@ -241,9 +225,7 @@ const BookASeatPage: React.FC = () => {
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-[20px] font-bold text-[#1A1A2E] leading-tight">Book a Seat</h1>
-              <p className="text-[12.5px] text-gray-400 mt-0.5">
-                Reserve your workspace in a few steps
-              </p>
+              <p className="text-[12.5px] text-gray-400 mt-0.5">Reserve your workspace in a few steps</p>
             </div>
             <Button
               variant="outline"
@@ -332,9 +314,7 @@ const BookASeatPage: React.FC = () => {
                       </SelectTrigger>
                       <SelectContent>
                         {sites.map((s) => (
-                          <SelectItem key={s.id} value={s.id}>
-                            {s.name}
-                          </SelectItem>
+                          <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -355,9 +335,7 @@ const BookASeatPage: React.FC = () => {
                       </SelectTrigger>
                       <SelectContent>
                         {buildings.map((b) => (
-                          <SelectItem key={b.id} value={b.id}>
-                            {b.name}
-                          </SelectItem>
+                          <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -378,9 +356,7 @@ const BookASeatPage: React.FC = () => {
                       </SelectTrigger>
                       <SelectContent>
                         {floors.map((f) => (
-                          <SelectItem key={f.id} value={f.id}>
-                            {f.name}
-                          </SelectItem>
+                          <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -511,7 +487,8 @@ const BookASeatPage: React.FC = () => {
                 <div>
                   <p className="text-[12.5px] font-semibold text-[#1A1A2E]">What happens next?</p>
                   <p className="text-[12px] text-gray-400 mt-0.5">
-                    You'll be taken to the floor map to view and select your preferred seats based on availability and your preferences.
+                    You'll be taken to the floor map to view and select your preferred seats based on
+                    availability and your preferences.
                   </p>
                 </div>
               </div>
@@ -519,93 +496,41 @@ const BookASeatPage: React.FC = () => {
           )}
 
           {/* ════════════════════════════════════════════════════
-              STEP 2 – Select a Seat (Floor Map)
+              STEP 2 – Select a Seat (SVG Floor Map)
+              Replaced the old grid-tile map with SvgFloorMapPage.
+              All state (seats, selectedSeatId, selectSeat) flows
+              from useBookingForm() exactly as before.
           ════════════════════════════════════════════════════ */}
           {step === 2 && (
             <div className="bg-white border border-[#EBEBF5] rounded-xl p-6 flex flex-col gap-5">
 
-              {/* Header */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-[15px] font-bold text-[#1A1A2E]">Select a Seat</p>
-                  <p className="text-[12px] text-gray-400 mt-0.5">
-                    {selectedSite?.name} · {selectedBuilding?.name} · {selectedFloor?.name}
-                  </p>
-                </div>
-                <div className="flex gap-2.5 items-center">
-                  {/* Legend */}
-                  <div className="flex gap-3 items-center text-[11px] text-gray-500">
-                    <span className="flex items-center gap-1">
-                      <span className="w-3 h-3 rounded bg-indigo-600 inline-block" /> Selected
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-3 h-3 rounded bg-indigo-50 border border-indigo-200 inline-block" /> Matches prefs
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-3 h-3 rounded bg-white border border-[#EBEBF5] inline-block" /> Available
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-3 h-3 rounded bg-gray-100 inline-block" /> Booked
-                    </span>
-                  </div>
-                </div>
-              </div>
+              {/*
+                SvgFloorMapPage handles:
+                  - Fetching & rendering /public/floor-IT.svg
+                  - Painting each <g id="N"> with available / booked / selected colours
+                  - Tooltip on hover
+                  - Zoom + pan controls
+                  - Selected seat banner
+                It calls onSeatSelect(seat.id) → selectSeat() → updates form.selectedSeatId
+              */}
+              <SvgFloorMapPage
+                seats={seatsWithSvgId}
+                selectedSeatId={form.selectedSeatId}
+                onSeatSelect={selectSeat}
+                loading={loadingSeats}
+                siteName={selectedSite?.name}
+                buildingName={selectedBuilding?.name}
+                floorName={selectedFloor?.name}
+              />
 
-              <Separator />
-
-              {/* Floor map */}
-              <div className="bg-[#F7F8FC] border border-[#EBEBF5] rounded-xl p-6 overflow-x-auto">
-                <div className="flex flex-col gap-3 min-w-max">
-                  {Object.entries(seatRows).sort(([a], [b]) => Number(a) - Number(b)).map(([row, rowSeats]) => (
-                    <div key={row} className="flex gap-2 items-center">
-                      <span className="text-[10px] font-semibold text-gray-300 w-5 text-right mr-1">
-                        {String.fromCharCode(64 + Number(row))}
-                      </span>
-                      <div className="flex gap-2">
-                        {rowSeats.sort((a, b) => a.col - b.col).map((seat) => (
-                          <SeatTile
-                            key={seat.id}
-                            seat={seat}
-                            selected={form.selectedSeatId === seat.id}
-                            onSelect={() => selectSeat(seat.id)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Selected seat info */}
-              {selectedSeat && (
-                <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-5 py-3 flex items-center justify-between">
-                  <div>
-                    <p className="text-[13px] font-semibold text-indigo-700">
-                      Seat {selectedSeat.label} selected
-                    </p>
-                    {/* ── FIX: use availablePreferences + pref.name ── */}
-                    <div className="flex gap-1.5 mt-1.5">
-                      {selectedSeat.amenities.map((a) => {
-                        const pref = availablePreferences.find((p) => p.key === a);
-                        return pref ? (
-                          <Badge
-                            key={a}
-                            variant="secondary"
-                            className="text-[10px] px-2 py-0.5 bg-white border border-indigo-100 text-indigo-600"
-                          >
-                            {pref.name}
-                          </Badge>
-                        ) : null;
-                      })}
-                    </div>
-                  </div>
-                  <CheckCircle2 size={20} className="text-indigo-500 shrink-0" />
-                </div>
-              )}
-
-              {/* Actions */}
+              {/* Step navigation — unchanged from original */}
               <div className="flex justify-between pt-1 border-t border-[#EBEBF5]">
-                <Button variant="outline" size="sm" onClick={goBack} className="text-[12.5px]">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={goBack}
+                  className="text-[12.5px]"
+                >
                   ← Back
                 </Button>
                 <Button
@@ -622,92 +547,97 @@ const BookASeatPage: React.FC = () => {
           {/* ════════════════════════════════════════════════════
               STEP 3 – Review & Confirm
           ════════════════════════════════════════════════════ */}
-          {step === 3 && !confirmation && (
-            <div className="bg-white border border-[#EBEBF5] rounded-xl p-6 flex flex-col gap-5 max-w-xl">
-              <div>
-                <p className="text-[15px] font-bold text-[#1A1A2E]">Review & Confirm</p>
-                <p className="text-[12px] text-gray-400 mt-0.5">Please review your booking details before confirming</p>
-              </div>
+        {step === 3 && !confirmation && (
+  <div className="flex justify-center">
+    <div className="bg-white border border-[#EBEBF5] rounded-xl p-6 flex flex-col gap-5 w-full max-w-2xl">
+      <div>
+        <p className="text-[15px] font-bold text-[#1A1A2E]">Review & Confirm</p>
+        <p className="text-[12px] text-gray-400 mt-0.5">
+          Please review your booking details before confirming
+        </p>
+      </div>
 
-              <Separator />
+      <Separator />
 
-              <div>
-                <SummaryRow label="Location"  value={selectedSite?.name ?? "—"} />
-                <SummaryRow label="Building"  value={selectedBuilding?.name ?? "—"} />
-                <SummaryRow label="Floor"     value={selectedFloor?.name ?? "—"} />
-                <SummaryRow label="Seat"      value={`Seat ${selectedSeat?.label ?? "—"}`} />
-                <SummaryRow label="From"      value={fmtDate(form.fromDate)} />
-                <SummaryRow label="To"        value={fmtDate(form.toDate)} />
-                <SummaryRow label="Duration"  value={`${dayCount} ${dayCount === 1 ? "day" : "days"}`} />
-                <div className="py-3 flex justify-between items-center">
-                  <span className="text-[12.5px] text-gray-500">Preferences</span>
-                  {/* ── FIX: use availablePreferences + pref.name ── */}
-                  <div className="flex gap-1.5 flex-wrap justify-end">
-                    {form.preferences.length > 0
-                      ? form.preferences.map((p) => {
-                          const pref = availablePreferences.find((x) => x.key === p);
-                          return pref ? (
-                            <Badge key={p} variant="secondary" className="text-[11px]">
-                              {pref.name}
-                            </Badge>
-                          ) : null;
-                        })
-                      : <span className="text-[12.5px] font-semibold text-[#1A1A2E]">None selected</span>
-                    }
-                  </div>
-                </div>
-              </div>
+      <div>
+        <SummaryRow label="Location"   value={selectedSite?.name ?? "—"} />
+        <SummaryRow label="Building"   value={selectedBuilding?.name ?? "—"} />
+        <SummaryRow label="Floor"      value={selectedFloor?.name ?? "—"} />
+        <SummaryRow label="Seat"       value={`Seat ${selectedSeat?.label ?? "—"}`} />
+        <SummaryRow label="From"       value={fmtDate(form.fromDate)} />
+        <SummaryRow label="To"         value={fmtDate(form.toDate)} />
+        <SummaryRow label="Duration"   value={`${dayCount} ${dayCount === 1 ? "day" : "days"}`} />
+        <div className="py-3 flex justify-between items-center">
+          <span className="text-[12.5px] text-gray-500">Preferences</span>
+          <div className="flex gap-1.5 flex-wrap justify-end">
+            {form.preferences.length > 0
+              ? form.preferences.map((p) => {
+                  const pref = availablePreferences.find((x) => x.key === p);
+                  return pref ? (
+                    <Badge key={p} variant="secondary" className="text-[11px]">
+                      {pref.name}
+                    </Badge>
+                  ) : null;
+                })
+              : <span className="text-[12.5px] font-semibold text-[#1A1A2E]">None selected</span>
+            }
+          </div>
+        </div>
+      </div>
 
-              <div className="flex justify-between pt-1 border-t border-[#EBEBF5]">
-                <Button variant="outline" size="sm" onClick={goBack} className="text-[12.5px]">
-                  ← Back
-                </Button>
-                <Button
-                  onClick={confirmBooking}
-                  disabled={submitting}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 text-[13px] font-semibold"
-                >
-                  {submitting ? "Confirming…" : "Confirm Booking"}
-                </Button>
-              </div>
-            </div>
-          )}
+      <div className="flex justify-between pt-1 border-t border-[#EBEBF5]">
+        <Button variant="outline" size="sm" onClick={goBack} className="text-[12.5px]">
+          ← Back
+        </Button>
+        <Button
+          onClick={confirmBooking}
+          disabled={submitting}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 text-[13px] font-semibold"
+        >
+          {submitting ? "Confirming…" : "Confirm Booking"}
+        </Button>
+      </div>
+    </div>
+  </div>
+)}
 
           {/* ════════════════════════════════════════════════════
               Confirmation success
           ════════════════════════════════════════════════════ */}
-          {confirmation && (
-            <div className="bg-white border border-[#EBEBF5] rounded-xl p-8 flex flex-col items-center gap-4 max-w-md mx-auto text-center">
-              <div className="w-14 h-14 rounded-full bg-emerald-50 flex items-center justify-center">
-                <CheckCircle2 size={28} className="text-emerald-500" />
-              </div>
-              <div>
-                <p className="text-[18px] font-bold text-[#1A1A2E]">Booking Confirmed!</p>
-                <p className="text-[12.5px] text-gray-400 mt-1">
-                  Your seat has been reserved successfully.
-                </p>
-              </div>
-              <div className="bg-[#F7F8FC] border border-[#EBEBF5] rounded-xl px-6 py-4 w-full text-left">
-                <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400 mb-3">
-                  Booking Details
-                </p>
-                <SummaryRow label="Confirmation" value={confirmation.confirmationCode} />
-                <SummaryRow label="Location"     value={confirmation.location} />
-                <SummaryRow label="Floor"        value={confirmation.floor} />
-                <SummaryRow label="Seat"         value={confirmation.seat} />
-                <SummaryRow label="From"         value={fmtDate(confirmation.fromDate)} />
-                <SummaryRow label="To"           value={fmtDate(confirmation.toDate)} />
-              </div>
-              <Button
-                onClick={resetForm}
-                variant="outline"
-                className="text-[13px] font-medium w-full"
-              >
-                Book another seat
-              </Button>
-            </div>
-          )}
-
+        {confirmation && (
+  <div className="flex justify-center">
+    <div className="bg-white border border-[#EBEBF5] rounded-xl p-8 flex flex-col items-center gap-4 w-full max-w-2xl text-center">
+      <div className="w-14 h-14 rounded-full bg-emerald-50 flex items-center justify-center">
+        <CheckCircle2 size={28} className="text-emerald-500" />
+      </div>
+      <div>
+        <p className="text-[18px] font-bold text-[#1A1A2E]">Booking Confirmed!</p>
+        <p className="text-[12.5px] text-gray-400 mt-1">
+          Your seat has been reserved successfully.
+        </p>
+      </div>
+      <div className="bg-[#F7F8FC] border border-[#EBEBF5] rounded-xl px-6 py-4 w-full text-left">
+        <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400 mb-3">
+          Booking Details
+        </p>
+        <SummaryRow label="Booking ID" value={confirmation.booking_id} />
+        <SummaryRow label="Location"   value={confirmation.site_name ?? "—"} />
+        <SummaryRow label="Building"   value={confirmation.building_name ?? "—"} />
+        <SummaryRow label="Floor"      value={confirmation.floor_name ?? "—"} />
+        <SummaryRow label="Seat"       value={confirmation.seat_code ?? "—"} />
+        <SummaryRow label="Date"       value={fmtDate(confirmation.booking_date)} />
+        <SummaryRow label="Status"     value={confirmation.booking_status} />
+      </div>
+      <Button
+        onClick={resetForm}
+        variant="outline"
+        className="text-[13px] font-medium w-full"
+      >
+        Book another seat
+      </Button>
+    </div>
+  </div>
+)}
         </main>
       </div>
     </SidebarProvider>

@@ -17,7 +17,7 @@ import {
   fetchBuildings,
   fetchFloors,
   fetchPreferences,
-  fetchSeats,
+  fetchSeatsWithAvailability, // ← was fetchSeats (removed), use this instead
   fetchSites,
 } from "../services/Bookingform.service";
 
@@ -49,7 +49,7 @@ export function useBookingForm() {
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [floors, setFloors] = useState<Floor[]>([]);
   const [seats, setSeats] = useState<Seat[]>([]);
-  const [availablePreferences, setAvailablePreferences] = useState<Preference[]>([]);  // ← renamed
+  const [availablePreferences, setAvailablePreferences] = useState<Preference[]>([]);
 
   const [loadingSites, setLoadingSites] = useState(false);
   const [loadingBuildings, setLoadingBuildings] = useState(false);
@@ -74,7 +74,7 @@ export function useBookingForm() {
   useEffect(() => {
     setLoadingPreferences(true);
     fetchPreferences()
-      .then(setAvailablePreferences)                // ← updated setter
+      .then(setAvailablePreferences)
       .catch((e) => setError(e.message))
       .finally(() => setLoadingPreferences(false));
   }, []);
@@ -145,7 +145,6 @@ export function useBookingForm() {
   const setToDate = (v: string) =>
     setForm((f) => ({ ...f, toDate: v }));
 
-  // ← fixed: was using PreferenceKey, now plain string
   const togglePreference = (key: string) =>
     setForm((f) => ({
       ...f,
@@ -158,6 +157,8 @@ export function useBookingForm() {
     setForm((f) => ({ ...f, preferences: [] }));
 
   // ── Step 1 → Step 2: load seats ──────────────────────────────────────────
+  // Uses fetchSeatsWithAvailability — /bookings/available is the source of
+  // truth. Seats absent from that response are shown as "booked" in the UI.
 
   const findAvailableSeats = useCallback(async () => {
     if (!form.floorId || !form.fromDate || !form.toDate) return;
@@ -166,7 +167,7 @@ export function useBookingForm() {
     setError(null);
 
     try {
-      const data = await fetchSeats({
+      const data = await fetchSeatsWithAvailability({
         floorId: form.floorId,
         fromDate: form.fromDate,
         toDate: form.toDate,
@@ -183,8 +184,11 @@ export function useBookingForm() {
 
   // ── Step 2: select seat ──────────────────────────────────────────────────
 
-  const selectSeat = (seatId: string) =>
-    setForm((f) => ({ ...f, selectedSeatId: seatId }));
+  // const selectSeat = (seatId: string) =>
+  //   setForm((f) => ({ ...f, selectedSeatId: seatId }));
+  const selectSeat = (seatId: string | null) => {
+  setForm((f) => ({ ...f, selectedSeatId: seatId }));
+};
 
   const goToReview = () => {
     if (!form.selectedSeatId) return;
@@ -193,31 +197,70 @@ export function useBookingForm() {
 
   // ── Step 3: confirm booking ──────────────────────────────────────────────
 
+  // const confirmBooking = useCallback(async () => {
+  //   if (!form.selectedSeatId) return;
+
+  //   setSubmitting(true);
+  //   setError(null);
+
+  //   try {
+  //     const result = await createBooking({
+  //       siteId: form.siteId,
+  //       buildingId: form.buildingId,
+  //       floorId: form.floorId,
+  //       seatId: form.selectedSeatId,
+  //       fromDate: form.fromDate,
+  //       toDate: form.toDate,
+  //       preferences: form.preferences,
+  //     });
+  //     setConfirmation(result);
+  //   } catch (e: unknown) {
+  //     setError(
+  //       e instanceof Error ? e.message : "Booking failed. Please try again."
+  //     );
+  //   } finally {
+  //     setSubmitting(false);
+  //   }
+  // }, [form]);
+
   const confirmBooking = useCallback(async () => {
-    if (!form.selectedSeatId) return;
+  if (!form.selectedSeatId) return;
 
-    setSubmitting(true);
-    setError(null);
+  setSubmitting(true);
+  setError(null);
 
-    try {
-      const result = await createBooking({
-        siteId: form.siteId,
-        buildingId: form.buildingId,
-        floorId: form.floorId,
-        seatId: form.selectedSeatId,
-        fromDate: form.fromDate,
-        toDate: form.toDate,
-        preferences: form.preferences,
-      });
-      setConfirmation(result);
-    } catch (e: unknown) {
-      setError(
-        e instanceof Error ? e.message : "Booking failed. Please try again."
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  }, [form]);
+  try {
+    const result = await createBooking({
+      site_id:      Number(form.siteId),
+      building_id:  Number(form.buildingId),
+      floor_id:     Number(form.floorId),
+      seat_id:      Number(form.selectedSeatId),
+      booking_date: form.fromDate,   // "YYYY-MM-DD" string, backend expects `date`
+    });
+    setConfirmation(result);
+    setStep(3); // or however you signal success
+  // } catch (e: unknown) {
+  //   setError(
+  //     e instanceof Error ? e.message : "Booking failed. Please try again."
+  //   );
+  } catch (err: any) {
+  const status = err?.response?.status;
+  if (status === 409) {
+    setError("You already have a booking for this seat on the selected date. Please choose a different seat or date.");
+  } else if (status === 400) {
+    setError("Invalid booking details. Please go back and check your selection.");
+  } else if (status === 403) {
+    setError("You don't have permission to book this seat.");
+  } else if (status === 404) {
+    setError("The selected seat is no longer available. Please go back and choose another.");
+  } else {
+    setError(err?.response?.data?.message ?? err?.message ?? "Failed to confirm booking. Please try again.");
+  }
+
+  } finally {
+    setSubmitting(false);
+  }
+}, [form]);
 
   // ── Navigation helpers ───────────────────────────────────────────────────
 
@@ -236,10 +279,10 @@ export function useBookingForm() {
 
   // ── Derived ──────────────────────────────────────────────────────────────
 
-  const selectedSite = sites.find((s) => s.id === form.siteId);
+  const selectedSite     = sites.find((s) => s.id === form.siteId);
   const selectedBuilding = buildings.find((b) => b.id === form.buildingId);
-  const selectedFloor = floors.find((f) => f.id === form.floorId);
-  const selectedSeat = seats.find((s) => s.id === form.selectedSeatId);
+  const selectedFloor    = floors.find((f) => f.id === form.floorId);
+  const selectedSeat     = seats.find((s) => s.id === form.selectedSeatId);
 
   const dayCount = (() => {
     if (!form.fromDate || !form.toDate) return 0;
@@ -263,14 +306,14 @@ export function useBookingForm() {
     buildings,
     floors,
     seats,
-    availablePreferences,     // ← exposed for the UI
+    availablePreferences,
     confirmation,
     error,
     loadingSites,
     loadingBuildings,
     loadingFloors,
     loadingSeats,
-    loadingPreferences,       // ← exposed for the UI
+    loadingPreferences,
     submitting,
     selectedSite,
     selectedBuilding,

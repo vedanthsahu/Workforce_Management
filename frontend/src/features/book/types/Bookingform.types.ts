@@ -49,36 +49,74 @@ export interface BookingFormState {
 
 export type SeatStatus = "available" | "booked" | "unavailable" | "yours";
 
+// export interface Seat {
+//   id: string;
+//   label: string;
+//   row: number;
+//   col: number;
+//   status: SeatStatus;
+//   matchesPreferences: boolean;
+//   amenities: string[];         // ← was PreferenceKey[]
+// }
 export interface Seat {
-  id: string;
-  label: string;
-  row: number;
-  col: number;
-  status: SeatStatus;
+  id:                 string;
+  svgId:              string;   // ← add this if missing
+  label:              string;
+  row?:               number;
+  col?:               number;
+  status:             "available" | "booked" | "unavailable" | "yours";
   matchesPreferences: boolean;
-  amenities: string[];         // ← was PreferenceKey[]
+  amenities:          string[];
 }
 
 // ── Booking confirmation payload ──────────────────────────────────────────────
 
+// export interface CreateBookingPayload {
+//   siteId: string;
+//   buildingId: string;
+//   floorId: string;
+//   seatId: string;
+//   fromDate: string;
+//   toDate: string;
+//   preferences: string[];       // ← was PreferenceKey[]
+// }
+
+// export interface CreateBookingResponse {
+//   bookingId: string;
+//   confirmationCode: string;
+//   seat: string;
+//   location: string;
+//   floor: string;
+//   fromDate: string;
+//   toDate: string;
+// }
+
 export interface CreateBookingPayload {
-  siteId: string;
-  buildingId: string;
-  floorId: string;
-  seatId: string;
-  fromDate: string;
-  toDate: string;
-  preferences: string[];       // ← was PreferenceKey[]
+  site_id: number;
+  building_id: number;
+  floor_id: number;
+  seat_id: number;
+  booking_date: string; // "YYYY-MM-DD"
 }
 
 export interface CreateBookingResponse {
-  bookingId: string;
-  confirmationCode: string;
-  seat: string;
-  location: string;
-  floor: string;
-  fromDate: string;
-  toDate: string;
+  booking_id: string;
+  tenant_id: string;
+  user_id: string;
+  seat_id: string;
+  site_id: string | null;
+  building_id: string | null;
+  floor_id: string | null;
+  seat_code: string | null;
+  site_name: string | null;
+  building_name: string | null;
+  floor_name: string | null;
+  booking_date: string;
+  booking_status: string;
+  source_channel: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  created_at: string | null;
 }
 
 // ── Step enum ─────────────────────────────────────────────────────────────────
