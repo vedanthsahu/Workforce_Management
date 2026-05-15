@@ -193,6 +193,11 @@ class Settings:
     auth_url: str
     token_url: str
     jwks_url: str
+    aws_access_key_id: str
+    aws_secret_access_key: str
+    aws_region: str
+    aws_s3_bucket_name: str
+    aws_s3_public_base_url: str
 
     @property
     def db_config(self) -> dict[str, object]:
@@ -284,4 +289,9 @@ def get_settings() -> Settings:
         auth_url=f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize",
         token_url=f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
         jwks_url=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
+        aws_access_key_id=_require_env("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=_require_env("AWS_SECRET_ACCESS_KEY"),
+        aws_region=_require_env("AWS_REGION"),
+        aws_s3_bucket_name=_require_env("AWS_S3_BUCKET_NAME"),
+        aws_s3_public_base_url=_require_env("AWS_S3_PUBLIC_BASE_URL"),
     )
